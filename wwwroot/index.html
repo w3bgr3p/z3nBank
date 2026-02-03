@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>z3nTreasury</title>
+    <link href="https://cdn.jsdelivr.net/npm/@sweetalert2/theme-dark@4/dark.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="loadingOverlay" class="loading-overlay">
+    ⏳ Loading treasury data...
+</div>
+
+<div class='header'>
+    <h1>z3nBank</h1>
+    <div class='stats-bar'>
+        <div class='stat-item'>
+            <span class='stat-label'>Accounts:</span>
+            <span class='stat-value' id='totalAccounts'>-</span>
+        </div>
+        <div class='stat-item'>
+            <span class='stat-label'>Active:</span>
+            <span class='stat-value' id='activeAccounts'>-</span>
+        </div>
+        <div class='stat-item'>
+            <span class='stat-label'>Chains:</span>
+            <span class='stat-value' id='totalChains'>-</span>
+        </div>
+        <div class='stat-item'>
+            <span class='stat-label'>Total:</span>
+            <span class='stat-value' id='totalValue'>$0</span>
+        </div>
+    </div>
+</div>
+
+<div class='controls'>
+    <button onclick="refreshData()">🔄 Refresh</button>
+    <button onclick="toggleAutoRefresh()">⏸️ Auto: <span id="autoStatus">OFF</span></button>
+    <input type="number" id="maxIdInput" value="100" min="10" max="10000" placeholder="Max ID">
+    <button onclick="updateBalances()" class="danger">⚡ Update Balances</button>
+    <div class="custom-multiselect" id="chainMultiselect">
+        <div class="select-box" onclick="toggleMultiselect()">
+            <span id="selectedChainsLabel">All Chains</span>
+            <span class="arrow">▼</span>
+        </div>
+        <div class="checkboxes" id="chainCheckboxes">
+        </div>
+    </div>
+    <label style="margin-left: 10px; color: #8b949e;">Bridge to:</label>
+    <select id="destinationChainSelect" style="padding: 4px 10px; font-size: 10px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; font-family: inherit;">
+        <!-- Будет заполнено динамически -->
+    </select>
+    <label style="margin-left: 10px; color: #8b949e;">Bridge Service:</label>
+    <select id="protocolSelect" style="padding: 4px 10px; font-size: 10px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; font-family: inherit;">
+        <option value="Relay">Relay</option>
+        <option value="LiFi">LiFi</option>
+    </select>
+
+    <label style="margin-left: 10px; color: #8b949e;">Threshold:</label>
+    <input type="number" id="thresholdInput" value="0.1" min="0" max="1000" step="0.01" placeholder="Threshold" style="width: 80px; padding: 4px 8px; font-size: 10px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; font-family: inherit;">
+
+    <label style="margin-left: 10px; color: #8b949e; display: flex; align-items: center; gap: 5px;">
+        <input type="checkbox" id="excludeStablesCheckbox" style="cursor: pointer;">
+        Exclude Stables
+    </label>
+    <div class='stat-item help-highlight'>
+        <span class="stat-value">Ctrl + H for help</span>
+    </div>
+</div>
+
+<div class="main-content">
+    <!-- LEFT SECTION: Table + Logs -->
+    <div class="left-section">
+        <!-- TABLE -->
+        <div class='table-wrapper'>
+            <div class='table-container' id='tableContainer'></div>
+        </div>
+
+
+    </div>
+
+    <!-- LOGS PANEL -->
+    <div class="logs-panel">
+        <div class="logs-header">
+            
+            <div class="logs-controls">
+                
+                <button onclick="toggleLogsAutoRefresh()" style="display: none;">⏸️ <span id="logsAutoStatus">ON</span></button>
+                <select id="logsLevelFilter" onchange="refreshLogs()">
+                    <option value="">All Levels</option>
+                    <option value="ERROR">ERROR</option>
+                    <option value="WARNING">WARNING</option>
+                    <option value="INFO">INFO</option>
+                    <option value="SUCCESS">SUCCESS</option>
+                </select>
+                
+                <select id="logsMachineFilter" onchange="refreshLogs()"  style="display: none;">
+                    <option value="">Machines</option>
+                </select>
+                
+                <select id="logsProjectFilter" onchange="refreshLogs()" style="display: none;">
+                    <option value="">Projects</option>
+                </select>
+                
+                <input type="number" id="logsLimitInput" value="50" min="10" max="200" style="width: 50px;" onchange="refreshLogs()">
+                <button onclick="clearLogsServer()" class="danger">🗑️</button>
+            </div>
+        </div>
+        <div class="logs-content" id="logsContainer"></div>
+    </div>
+
+    <!-- RIGHT SECTION: Sidebar Stats -->
+    <div class="sidebar">
+        <div class="sidebar-section">
+            <h3>Top Tokens</h3>
+            <div class="token-list" id="topTokens">
+                <!-- Filled by JS -->
+            </div>
+        </div>
+
+        <div class="sidebar-section">
+            <h3>Chains Distribution</h3>
+            <div class="chain-stats" id="chainStats">
+                <!-- Filled by JS -->
+            </div>
+        </div>
+
+        <div class="sidebar-section">
+            <h3>Portfolio Summary</h3>
+            <div id="portfolioSummary" style="font-size: 10px; color: #8b949e;">
+                <!-- Filled by JS -->
+            </div>
+        </div>
+
+        
+    </div>
+</div>
+
+<div class='legend'>
+    <span>Less</span>
+    <div class='legend-item'><div class='legend-box' style='background: #161b22; border: 1px dashed #30363d;'></div></div>
+    <div class='legend-item'><div class='legend-box' style='background: #0e4429;'></div></div>
+    <div class='legend-item'><div class='legend-box' style='background: #006d32;'></div></div>
+    <div class='legend-item'><div class='legend-box' style='background: #26a641;'></div></div>
+    <div class='legend-item'><div class='legend-box' style='background: #39d353;'></div></div>
+    <span>More</span>
+</div>
+
+<div class='tooltip' id='tooltip'>
+    <div class='tooltip-header' id='tooltipHeader'></div>
+    <div class='tooltip-address' id='tooltipAddress'></div>
+    <div class='tooltip-content' id='tooltipContent'></div>
+</div>
+
+<script>
+    // Inline test - if you see this in console, HTML is working
+    console.log('=== INLINE SCRIPT LOADED ===');
+    console.log('Location:', window.location.href);
+    console.log('Origin:', window.location.origin);
+</script>
+
+<script src="app.js"></script>
+<script src="logs.js"></script>
+<script src="ui-components.js"></script>
+
+
+<script>
+   
+
+   
+    
+</script>
+</body>
+</html>

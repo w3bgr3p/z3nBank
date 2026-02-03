@@ -1,0 +1,487 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Treasury Heatmap</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0e27;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 100%;
+            margin: 0 auto;
+            overflow-x: auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #00d4ff;
+            font-size: 2em;
+            text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+        }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #1e2139 0%, #2a2d4a 100%);
+            padding: 15px 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(0, 212, 255, 0.2);
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            color: #888;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #00d4ff;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            background: #1a1d35;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        th, td {
+            padding: 12px 15px;
+            text-align: center;
+            border: 1px solid #2a2d4a;
+        }
+
+        th {
+            background: linear-gradient(135deg, #2a2d4a 0%, #1e2139 100%);
+            color: #00d4ff;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            text-transform: uppercase;
+            font-size: 0.85em;
+            letter-spacing: 1px;
+        }
+
+        th:first-child {
+            left: 0;
+            z-index: 11;
+        }
+
+        td:first-child {
+            background: #1e2139;
+            font-weight: 600;
+            color: #00d4ff;
+            position: sticky;
+            left: 0;
+            z-index: 5;
+        }
+
+        .heatmap-cell {
+            width: 50px;
+            height: 50px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            border-radius: 4px;
+        }
+
+        .heatmap-cell.empty {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px dashed rgba(255, 255, 255, 0.1);
+        }
+
+        .heatmap-cell.has-balance {
+            background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
+            box-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
+        }
+
+        .heatmap-cell:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 20px rgba(0, 212, 255, 0.6);
+            z-index: 100;
+        }
+
+        .tooltip {
+            position: fixed;
+            background: linear-gradient(135deg, #2a2d4a 0%, #1e2139 100%);
+            border: 2px solid #00d4ff;
+            border-radius: 8px;
+            padding: 15px;
+            max-width: 400px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .tooltip.show {
+            opacity: 1;
+        }
+
+        .tooltip-header {
+            font-weight: bold;
+            color: #00d4ff;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+            border-bottom: 1px solid rgba(0, 212, 255, 0.3);
+            padding-bottom: 8px;
+        }
+
+        .tooltip-content {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .token-item {
+            padding: 8px;
+            margin: 5px 0;
+            background: rgba(0, 212, 255, 0.1);
+            border-radius: 5px;
+            border-left: 3px solid #00d4ff;
+        }
+
+        .token-symbol {
+            font-weight: bold;
+            color: #00ff88;
+            margin-right: 10px;
+        }
+
+        .token-amount {
+            color: #e0e0e0;
+            font-size: 0.9em;
+        }
+
+        .token-value {
+            color: #ffd700;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+
+        .total-value {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(0, 212, 255, 0.3);
+            font-weight: bold;
+            color: #ffd700;
+            font-size: 1.1em;
+        }
+
+        .address-cell {
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1a1d35;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #00d4ff;
+            border-radius: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #0099cc;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 50px;
+            font-size: 1.5em;
+            color: #00d4ff;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>🗺️ Treasury Heatmap</h1>
+
+    <div class="stats" id="stats">
+        <div class="stat-card">
+            <div class="stat-label">Total Accounts</div>
+            <div class="stat-value" id="totalAccounts">-</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Active Accounts</div>
+            <div class="stat-value" id="activeAccounts">-</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total Chains</div>
+            <div class="stat-value" id="totalChains">-</div>
+        </div>
+    </div>
+
+    <div id="tableContainer" class="loading">Loading data...</div>
+</div>
+
+<div class="tooltip" id="tooltip">
+    <div class="tooltip-header" id="tooltipHeader"></div>
+    <div class="tooltip-content" id="tooltipContent"></div>
+</div>
+
+<script>
+    // REPLACE THIS WITH YOUR ACTUAL DATA FROM DATABASE
+    // Формат: { id, address, chainData: { ChainName: [...tokens], ... } }
+    const treasuryData = [
+        {
+            id: 116,
+            address: "0x26B031D71cd238BfDE4453dA91Dbf7D1499e309D",
+            chainData: {
+                "Optimism": [
+                    {
+                        "Symbol": "ETH",
+                        "AmountRaw": "331760819417343",
+                        "Decimals": 18,
+                        "PriceUSDString": "2971.39",
+                        "ChainId": 10,
+                        "Address": "0x0000000000000000000000000000000000000000",
+                        "ValueUSD": 0.98579078120849881677
+                    }
+                ]
+            }
+        },
+        {
+            id: 120,
+            address: "0x2aA3cC0AA7E89ff62E38eDe41Ee6da2490DfeE29",
+            chainData: {
+                "Optimism": [
+                    {
+                        "Symbol": "ETH",
+                        "AmountRaw": "353000000000000",
+                        "Decimals": 18,
+                        "PriceUSDString": "2971.39",
+                        "ChainId": 10,
+                        "Address": "0x0000000000000000000000000000000000000000",
+                        "ValueUSD": 1.04890067
+                    }
+                ]
+            }
+        },
+        {
+            id: 122,
+            address: "0x3bC138E594C2Ecf3A420E7845018bC1Cb070af83",
+            chainData: {
+                "Optimism": [
+                    {
+                        "Symbol": "ETH",
+                        "AmountRaw": "265519208541403",
+                        "Decimals": 18,
+                        "PriceUSDString": "2971.39",
+                        "ChainId": 10,
+                        "Address": "0x0000000000000000000000000000000000000000",
+                        "ValueUSD": 0.78896112106783946017
+                    }
+                ],
+                "Ethereum": [
+                    {
+                        "Symbol": "USDT",
+                        "AmountRaw": "5000000",
+                        "Decimals": 6,
+                        "PriceUSDString": "1.00",
+                        "ChainId": 1,
+                        "Address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+                        "ValueUSD": 5.00
+                    }
+                ]
+            }
+        }
+    ];
+
+    // Extract all unique chains
+    function getAllChains(data) {
+        const chains = new Set();
+        data.forEach(account => {
+            Object.keys(account.chainData).forEach(chain => chains.add(chain));
+        });
+        return Array.from(chains).sort();
+    }
+
+    // Calculate total value for a chain
+    function calculateChainTotal(tokens) {
+        return tokens.reduce((sum, token) => sum + (token.ValueUSD || 0), 0);
+    }
+
+    // Format USD value
+    function formatUSD(value) {
+        return new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 6
+        }).format(value);
+    }
+
+    // Format token amount
+    function formatAmount(amountRaw, decimals) {
+        const amount = parseFloat(amountRaw) / Math.pow(10, decimals);
+        return amount.toFixed(6);
+    }
+
+    // Create heatmap table
+    function createHeatmap(data) {
+        const chains = getAllChains(data);
+        const activeAccountsCount = data.filter(acc => Object.keys(acc.chainData).length > 0).length;
+
+        // Update stats
+        document.getElementById('totalAccounts').textContent = data.length;
+        document.getElementById('activeAccounts').textContent = activeAccountsCount;
+        document.getElementById('totalChains').textContent = chains.length;
+
+        let html = '<table><thead><tr><th>ID</th><th>Address</th>';
+
+        // Chain headers
+        chains.forEach(chain => {
+            html += `<th>${chain}</th>`;
+        });
+
+        html += '</tr></thead><tbody>';
+
+        // Account rows
+        data.forEach(account => {
+            html += `<tr>
+                    <td>${account.id}</td>
+                    <td class="address-cell">${account.address}</td>`;
+
+            chains.forEach(chain => {
+                const tokens = account.chainData[chain];
+                const hasBalance = tokens && tokens.length > 0;
+                const cellClass = hasBalance ? 'heatmap-cell has-balance' : 'heatmap-cell empty';
+
+                html += `<td>
+                        <div class="${cellClass}" 
+                             data-account-id="${account.id}"
+                             data-address="${account.address}"
+                             data-chain="${chain}"
+                             data-tokens='${hasBalance ? JSON.stringify(tokens) : '[]'}'>
+                        </div>
+                    </td>`;
+            });
+
+            html += '</tr>';
+        });
+
+        html += '</tbody></table>';
+
+        document.getElementById('tableContainer').innerHTML = html;
+        attachTooltipListeners();
+    }
+
+    // Tooltip functionality
+    function attachTooltipListeners() {
+        const tooltip = document.getElementById('tooltip');
+        const cells = document.querySelectorAll('.heatmap-cell');
+
+        cells.forEach(cell => {
+            cell.addEventListener('mouseenter', (e) => {
+                const tokens = JSON.parse(e.target.dataset.tokens);
+                if (tokens.length === 0) return;
+
+                const accountId = e.target.dataset.accountId;
+                const address = e.target.dataset.address;
+                const chain = e.target.dataset.chain;
+
+                showTooltip(accountId, address, chain, tokens, e);
+            });
+
+            cell.addEventListener('mouseleave', () => {
+                tooltip.classList.remove('show');
+            });
+
+            cell.addEventListener('mousemove', (e) => {
+                updateTooltipPosition(e);
+            });
+        });
+    }
+
+    function showTooltip(accountId, address, chain, tokens, event) {
+        const tooltip = document.getElementById('tooltip');
+        const header = document.getElementById('tooltipHeader');
+        const content = document.getElementById('tooltipContent');
+
+        const total = calculateChainTotal(tokens);
+
+        header.innerHTML = `
+                Account #${accountId} - ${chain}<br>
+                <span style="font-size: 0.8em; color: #888;">${address}</span>
+            `;
+
+        let tokensHtml = '';
+        tokens.forEach(token => {
+            const amount = formatAmount(token.AmountRaw, token.Decimals);
+            tokensHtml += `
+                    <div class="token-item">
+                        <span class="token-symbol">${token.Symbol}</span>
+                        <span class="token-amount">${amount}</span>
+                        <span class="token-value">${formatUSD(token.ValueUSD)}</span>
+                    </div>
+                `;
+        });
+
+        tokensHtml += `<div class="total-value">Total: ${formatUSD(total)}</div>`;
+        content.innerHTML = tokensHtml;
+
+        updateTooltipPosition(event);
+        tooltip.classList.add('show');
+    }
+
+    function updateTooltipPosition(event) {
+        const tooltip = document.getElementById('tooltip');
+        const offset = 15;
+
+        let x = event.clientX + offset;
+        let y = event.clientY + offset;
+
+        // Prevent tooltip from going off-screen
+        const tooltipRect = tooltip.getBoundingClientRect();
+        if (x + tooltipRect.width > window.innerWidth) {
+            x = event.clientX - tooltipRect.width - offset;
+        }
+        if (y + tooltipRect.height > window.innerHeight) {
+            y = event.clientY - tooltipRect.height - offset;
+        }
+
+        tooltip.style.left = x + 'px';
+        tooltip.style.top = y + 'px';
+    }
+
+    // Initialize
+    createHeatmap(treasuryData);
+
+    // TODO: Replace treasuryData with actual data from your database
+    // You can load it via fetch API or generate this file from C#
+</script>
+</body>
+</html>

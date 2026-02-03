@@ -1,0 +1,52 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+    <PropertyGroup>
+        <OutputType>WinExe</OutputType>
+        <TargetFramework>net8.0-windows</TargetFramework>
+        <UseWindowsForms>true</UseWindowsForms>
+
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+
+        <!-- Иконка приложения -->
+        <ApplicationIcon>icon.ico</ApplicationIcon>
+
+        <!-- Настройки для single-file exe -->
+        <PublishSingleFile>true</PublishSingleFile>
+        <SelfContained>true</SelfContained>
+        <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+        <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+        <RootNamespace>z3nBank</RootNamespace>
+    </PropertyGroup>
+    
+
+    
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2210.55" />
+        <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+        <PackageReference Include="Npgsql" Version="10.0.1" />
+        <PackageReference Include="System.Data.Odbc" Version="10.0.2" />
+        <PackageReference Include="System.Management" Version="10.0.0-rc.2.25502.107" />
+        <PackageReference Include="Nethereum.ABI" Version="4.29.0.0" />
+        <PackageReference Include="Nethereum.HdWallet" Version="4.29.0.0" />
+        <PackageReference Include="Nethereum.Web3" Version="4.29.0.0" />
+    </ItemGroup>
+
+    <!-- ДОБАВЬТЕ ЭТУ СЕКЦИЮ -->
+    <ItemGroup>
+        <Content Include="icon.ico">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+    </ItemGroup>
+
+    <ItemGroup>
+        <Folder Include="logs\" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Compile Remove="TasksLiFi.cs" />
+        <Compile Remove="Tasks.cs" />
+        <Compile Remove="Api\Relay.cs" />
+    </ItemGroup>
+
+</Project>
