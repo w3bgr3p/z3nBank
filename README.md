@@ -508,7 +508,7 @@ A: Fees depend on the selected protocol (Relay/LiFi) and current gas prices on t
 ---
 
 <p align="center">
-  Made with ❤️ by the z3nBank Team
+  Made with ❤️ by w3bgr3p
 </p>
 
 <p align="center">
