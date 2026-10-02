@@ -284,7 +284,7 @@ public class DeFi
 
                 if (!tokensToSwap.Any()) continue;
 
-                var rpcUrl = Rpc.Get(chainName);
+                var rpcUrl = Rpc.Get(chainIdInt);
                 if (string.IsNullOrEmpty(rpcUrl))
                 {
                     log?.Send($"❌ {chainName} | Skip: No RPC URL", "ERROR");

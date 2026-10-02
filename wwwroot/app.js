@@ -5,15 +5,30 @@ let autoRefresh = false;
 let autoRefreshInterval = null;
 let selectedChain = '';
 let dbConfigured = false;
+let savedDbConfig = null;
+
+function fillSavedDbConfig() {
+    if (!savedDbConfig?.type) return;
+    const fields = { 'swal-db-type': 'type', 'swal-sqlite-path': 'sqlitePath', 'swal-host': 'host',
+        'swal-port': 'port', 'swal-db': 'database', 'swal-user': 'user' };
+    for (const [id, key] of Object.entries(fields)) {
+        const field = document.getElementById(id);
+        if (field && savedDbConfig[key] != null) field.value = savedDbConfig[key];
+    }
+    document.getElementById('swal-db-type').dispatchEvent(new Event('change', { bubbles: true }));
+    if (savedDbConfig.passwordSaved) document.getElementById('swal-pass').placeholder = 'Saved password (leave blank to keep)';
+}
 
 async function submitDbConfig(config) {
     try {
+        config = { ...config, useSavedPassword: config.type === 'postgres' && !config.password && Boolean(savedDbConfig?.passwordSaved) };
         const response = await fetch(`${API_BASE}/db-config`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config)
         });
         const result = await response.json();
         if (!response.ok || !result.success) throw new Error(result.error || 'Не удалось подключиться к БД.');
         dbConfigured = true;
+        savedDbConfig = { ...config, password: undefined, passwordSaved: config.type === 'postgres' && Boolean(config.password || config.useSavedPassword) };
         return config;
     } catch (error) {
         Swal.showValidationMessage(error.message);
@@ -29,9 +44,10 @@ async function checkDbAndInit() {
         const status = await response.json();
 
         dbConfigured = status.connected;
+        savedDbConfig = status.config || null;
 
         if (!dbConfigured) {
-            await showDbConfigDialog();
+            await showDbConfigDialog(status.error);
             // УДАЛИЛ initDashboard(), так как её нет в коде. 
             // showDbConfigDialog и так в конце вызывает testAPI()
         } else {
@@ -42,7 +58,7 @@ async function checkDbAndInit() {
     }
 }
 
-async function showDbConfigDialog() {
+async function showDbConfigDialog(startupError) {
 
     let serverPath = "./";
     try {
@@ -108,6 +124,8 @@ async function showDbConfigDialog() {
                     postgresFields.style.display = 'block';
                 }
             });
+            fillSavedDbConfig();
+            if (startupError) Swal.showValidationMessage(startupError);
         },
 
         showLoaderOnConfirm: true,
@@ -1019,6 +1037,10 @@ async function importWallets() {
 }
 
 async function setDb() {
+    try {
+        const response = await fetch(`${API_BASE}/db-config`, { cache: 'no-store' });
+        if (response.ok) savedDbConfig = await response.json();
+    } catch (error) { console.error('Failed to load database settings:', error); }
     const { value: formValues } = await Swal.fire({
         title: 'Database Settings',
         html: `
@@ -1090,6 +1112,7 @@ async function setDb() {
                     }
                 }, 50);
             });
+            fillSavedDbConfig();
         },
 
         showLoaderOnConfirm: true,

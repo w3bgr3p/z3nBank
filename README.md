@@ -5,6 +5,8 @@
 
 z3nBank is a Windows desktop application for managing and visualizing multi-chain crypto portfolios. It displays saved balance snapshots, supports explicit balance updates, cross-chain bridging, and token swapping.
 
+Successful database connection settings are saved automatically in `%LOCALAPPDATA%/z3nBank/database.config` and restored on startup. Windows DPAPI protects the configuration, including the PostgreSQL password, for the current Windows user. A failed saved connection opens the configuration dialog with the previous parameters and a readable error. Database Settings pre-fills the saved parameters; leave the password blank to keep it for the same connection, or enter a replacement. Failed changes preserve the previous working connection and saved settings. Treasury RPC selection uses numeric chain IDs rather than provider display names.
+
 Database connection errors remain in the startup/settings dialog without clearing entered fields.
 PostgreSQL authentication, missing databases and connectivity failures have readable messages;
 failed settings changes preserve the existing working connection. Password and wallet PIN fields show

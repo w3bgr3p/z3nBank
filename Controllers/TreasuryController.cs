@@ -105,7 +105,9 @@ public partial class TreasuryController : ControllerBase
     public IActionResult GetDbStatus()
     {
         return Ok(new { 
-            connected = _dbService.IsConnected
+            connected = _dbService.IsConnected,
+            error = _dbService.StartupError,
+            config = PublicDbConfig()
         });
     }
 
@@ -122,6 +124,16 @@ public partial class TreasuryController : ControllerBase
             var error = DatabaseErrors.Describe(ex);
             return BadRequest(new { error = error.Message, code = error.Code, success = false });
         }
+    }
+
+    [HttpGet("db-config")]
+    public IActionResult GetDbConfig() => Ok(PublicDbConfig());
+
+    private object? PublicDbConfig()
+    {
+        var config = _dbService.GetCurrentConfig();
+        return config == null ? null : new { config.Type, config.SqlitePath, config.Host, config.Port,
+            config.Database, config.User, passwordSaved = !string.IsNullOrEmpty(config.Password) };
     }
 
     [HttpGet("keyboard-status")]

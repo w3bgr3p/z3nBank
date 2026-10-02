@@ -196,7 +196,7 @@ body.defi-active .stats-bar, body.defi-active .tooltip { display: none; }
 #defiExitStatus { margin-top: 10px; overflow-wrap: anywhere; }
 /* Password warnings use the same compact popup typography. */
 .caps-lock-hint { color: #e3b341; font-size: 12px; text-align: left; margin: 4px 0 8px; }
-.caps-lock-hint[hidden] { display: none; }
+.caps-lock-hint[hidden] { display: block; visibility: hidden; }
 .treasury-chain-choice { width: 100%; padding: 3px; border: 1px solid transparent; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .treasury-chain-choice.selected { border-color: var(--accent, #58a6ff); color: var(--accent, #58a6ff); background: rgba(88,166,255,.12); }
 .heatmap-cell.swap-chain-selected { outline: 1px solid var(--accent, #58a6ff); outline-offset: -1px; }

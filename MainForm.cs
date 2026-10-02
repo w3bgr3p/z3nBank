@@ -114,7 +114,7 @@ public class MainForm : Form
             });
         });
 
-        builder.Services.AddSingleton<DbConnectionService>();
+        builder.Services.AddSingleton(_ => new DbConnectionService(new DbConfigStore()));
         builder.Services.AddSingleton<LogService>();
 
         builder.WebHost.UseUrls("http://127.0.0.1:0");

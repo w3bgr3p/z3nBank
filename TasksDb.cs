@@ -90,7 +90,7 @@ public class TasksDb
                     }
                     stage = $"Verify RPC balances ({chainName})";
                     var verified = known.Count == 0 ? new List<Jumper.TokenInfo>() :
-                        await TreasuryRpcBalances.Read(new Nethereum.Web3.Web3(Rpc.Get(chainName)), chainId, address, known,
+                        await TreasuryRpcBalances.Read(new Nethereum.Web3.Web3(Rpc.Get(chainId)), chainId, address, known,
                             cancellation: timeout.Token);
                     var tokens = verified.Where(t => t.ValueUSD > minValue).ToList();
                     snapshot[chainName] = JsonConvert.SerializeObject(tokens);

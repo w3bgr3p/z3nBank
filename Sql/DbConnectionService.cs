@@ -7,6 +7,19 @@ public class DbConnectionService
     private Db? _db;
     private DbConfig? _config;
     private readonly object _lock = new object();
+    private readonly DbConfigStore? _store;
+    public string? StartupError { get; private set; }
+
+    public DbConnectionService(DbConfigStore? store = null)
+    {
+        _store = store;
+        if (store == null) return;
+        try { _config = store.Load(); }
+        catch { StartupError = "Не удалось прочитать сохранённые настройки БД. Укажите подключение заново."; return; }
+        if (_config == null) return;
+        try { Connect(_config, persist: false); }
+        catch (Exception ex) { StartupError = DatabaseErrors.Describe(ex).Message; }
+    }
 
     public bool IsConnected => _db != null;
 
@@ -31,12 +44,21 @@ public class DbConnectionService
         }
     }
 
-    public void Connect(DbConfig config)
+    public void Connect(DbConfig config, bool persist = true)
     {
         lock (_lock)
         {
             try
             {
+                if (config.UseSavedPassword)
+                {
+                    if (_config?.Type != "postgres" || config.Type != _config.Type ||
+                        config.Host != _config.Host || config.Port != _config.Port ||
+                        config.Database != _config.Database || config.User != _config.User)
+                        throw new ArgumentException("Enter the password for the changed database connection");
+                    config.Password = _config.Password;
+                    config.UseSavedPassword = false;
+                }
                 Db candidate;
                 if (config.Type == "sqlite")
                 {
@@ -74,8 +96,10 @@ public class DbConnectionService
                     throw new ArgumentException($"Unsupported database type: {config.Type}");
                 }
                 DBuilder.ImportDbStructure(candidate);
+                if (persist) _store?.Save(config);
                 _db = candidate;
                 _config = config;
+                StartupError = null;
                 Console.WriteLine("✅ Database connected successfully");
             }
             catch (Exception ex)
@@ -107,6 +131,7 @@ public class DbConnectionService
 
 public class DbConfig
 {
+    public bool UseSavedPassword { get; set; }
     public string Type { get; set; } = ""; // "sqlite" or "postgres"
     
     // SQLite

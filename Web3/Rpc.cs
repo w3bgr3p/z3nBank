@@ -8,6 +8,7 @@ using System.Collections.Generic;
     {
         Arbitrum = 42161,
         Base = 8453,
+        Celo = 42220,
         Blast = 81457,
         Optimism = 10,
         Linea = 59144,
@@ -53,6 +54,7 @@ using System.Collections.Generic;
             {RpcUrl.Ethereum, "https://ethereum-rpc.publicnode.com"},
             {RpcUrl.Arbitrum, "https://arbitrum-one.publicnode.com"},
             {RpcUrl.Base, "https://base-rpc.publicnode.com"},
+            {RpcUrl.Celo, "https://forno.celo.org"},
             {RpcUrl.Blast, "https://rpc.blast.io"},
             {RpcUrl.Fantom, "https://rpc.fantom.network"},
             {RpcUrl.Linea, "https://rpc.linea.build"},
@@ -86,6 +88,9 @@ using System.Collections.Generic;
         };
 
         public static string Get(RpcUrl network) => _rpcs[network];
+
+        public static string Get(int chainId) => _rpcs.TryGetValue((RpcUrl)chainId, out var url) ? url
+            : throw new ArgumentException($"No RPC configured for chain ID {chainId}");
 
         public static int ChainId(string name)
         {
@@ -123,8 +128,10 @@ using System.Collections.Generic;
         public static string Normalize(string name) => name.Trim().ToLowerInvariant() switch
         {
             "eth" => "ethereum", "arb" => "arbitrum", "era" or "zksync-era" => "zksync", "scrl" => "scroll",
-            "op" => "optimism", "avax" => "avalanche", "matic" => "polygon", "xdai" => "gnosis",
-            "binance-smart-chain" => "bsc", _ => name.Trim()
+            "op" or "op mainnet" => "optimism", "avax" or "avalanche c-chain" => "avalanche",
+            "matic" or "polygon mainnet" => "polygon", "xdai" => "gnosis",
+            "arbitrum one" => "arbitrum", "zksync era" => "zksync", "manta pacific" => "manta",
+            "binance-smart-chain" or "bnb smart chain" => "bsc", _ => name.Trim()
         };
 
         // Удобные статические свойства
