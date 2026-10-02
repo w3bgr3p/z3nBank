@@ -87,17 +87,21 @@ public partial class TreasuryController
     [HttpPost("defi/batch/execute")]
     public IActionResult ExecuteDefiBatch([FromBody] Guid planId)
     {
+        IActionResult Reject(string error, int status = 400) {
+            new Logger(true).Send($"DeFi batch not started | {error}", "ERROR");
+            return StatusCode(status, new { error });
+        }
         var check = CheckDbConnection(); if (check != null) return check;
         lock (DefiLock)
         lock (TokenSwapLock)
         {
             var plan = _defiBatchPlan;
             if (_defiScan != null || _defiPrepare != null || _defiExitRunning || SwapOperations.Count > 0 || _defiBlockingBridges > 0)
-                return Conflict(new { error = "Wait for the active operation to finish" });
+                return Reject("Wait for the active operation to finish", 409);
             if (plan == null || plan.Id != planId || plan.Expires < DateTimeOffset.UtcNow || plan.Version != _defiVersion ||
                 plan.Database != _dbService.GetDb() || _defiNeedsRescan || plan.Targets.Count == 0)
-                return BadRequest(new { error = "Batch preview is empty or expired; preview again" });
-            if (string.IsNullOrEmpty(_pin)) return BadRequest(new { error = "Set wallet PIN first" });
+                return Reject("Batch preview is empty or expired; preview again");
+            if (string.IsNullOrEmpty(_pin)) return Reject("Set wallet PIN first");
             var pin = _pin; _defiBatchPlan = null; _defiExit = null; _defiExitRunning = true;
             _defiExitResult = null; DefiBatchResults.Clear(); _defiBatchTotal = plan.Targets.Count;
             var operation = RegisterSwap();

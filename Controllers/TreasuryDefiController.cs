@@ -165,20 +165,25 @@ public partial class TreasuryController
     [HttpPost("defi/withdraw/execute")]
     public IActionResult ExecuteDefiExit([FromBody] Guid planId)
     {
+        IActionResult Reject(string error, int status = 400) {
+            new Logger(true).Send($"DeFi withdrawal not started | {error}", "ERROR");
+            return StatusCode(status, new { error });
+        }
         var check = CheckDbConnection(); if (check != null) return check;
         lock (DefiLock)
         {
             lock (TokenSwapLock)
             {
                 if (_defiScan != null || _defiPrepare != null || _defiExitRunning || SwapOperations.Count > 0 || _defiBlockingBridges > 0)
-                    return Conflict(new { error = "Wait for the active operation to finish" });
+                    return Reject("Wait for the active operation to finish", 409);
                 var plan = _defiExit;
                 if (plan == null || _defiNeedsRescan || plan.Id != planId || plan.Expires < DateTimeOffset.UtcNow || plan.Database != _dbService.GetDb())
-                    return BadRequest(new { error = "Withdrawal preview expired; preview again" });
-                if (string.IsNullOrEmpty(_pin)) return BadRequest(new { error = "Set wallet PIN first" });
+                    return Reject("Withdrawal preview expired; preview again");
+                if (string.IsNullOrEmpty(_pin)) return Reject("Set wallet PIN first");
                 var pin = _pin; _defiExit = null; _defiExitRunning = true; _defiExitResult = null;
                 DefiBatchResults.Clear(); _defiBatchTotal = 0;
                 var operation = RegisterSwap();
+                new Logger(true, acc: plan.Position.AccountId.ToString()).Send($"DeFi withdrawal accepted | {plan.Position.Protocol} | {plan.Position.Chain}");
                 _ = Task.Run(async () => {
                     var log = new Logger(true, acc: plan.Position.AccountId.ToString());
                     try

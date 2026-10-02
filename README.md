@@ -136,7 +136,10 @@ Sources: [LayerBank contracts/deployments](https://github.com/layerbank-foundati
 
 Single-withdrawal confirmation uses a centered application dialog matching the other DeFi popups, with wallet,
 output amounts, network fee and L1 fee displayed separately. Small fee amounts retain up to eight decimal places.
-Cancel, Escape or clicking outside the dialog does not execute the prepared withdrawal.
+Confirmation remains open until the server accepts execution. Missing PINs, expired plans and busy-operation
+errors are shown inside the confirmation and logged to the shared drawer. Confirm is disabled while submitting
+to prevent duplicate requests; after acceptance the normal operation status and logs show progress.
+Cancel, Escape or clicking outside the dialog before submitting does not execute the prepared withdrawal.
 
 Unverified Blackwing vaults, SyncSwap stable/staked pools and Balancer liquidity still require dedicated adapters.
 Click **Adapter unavailable · details** for the reason; these positions are not sent to ERC-4626 methods.

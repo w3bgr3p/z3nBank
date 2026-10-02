@@ -16,7 +16,7 @@ el('maxIdInput').value = '100'; el('defiGas').value = '2';
 const position = { id: 'p1', accountId: 3, wallet: '0x' + '1'.repeat(40), chain: 'eth', protocol: '<script>bad</script>',
     type: 'staked', symbol: 'Q', amount: '1', valueUsd: 10, vaultAddress: '0x' + '2'.repeat(40), assetAddress: '0x' + '3'.repeat(40), groupId: 'pool' };
 const quote = { amountRaw: '123456789123456789', decimals: 18, symbol: 'Q', valueUsd: 10, feeUsd: 1 };
-let confirmed = false, requests = [], confirmText = '', current = {
+let confirmed = false, requests = [], confirmText = '', executeError = '', executeGate = null, current = {
     running: false, processed: 2, total: 3, cancelled: false,
     accounts: [{ id: 3, address: position.wallet, status: 'scanned' }, { id: 4, address: 'pending-wallet', status: 'pending' }],
     positions: [position, { ...position, id: 'loan', type: 'loan', valueUsd: 3 },
@@ -28,6 +28,10 @@ const context = vm.createContext({ console, setTimeout: () => 1, clearTimeout() 
         body: { classList: { toggle() {} }, append(e) { elements.set(e.id, e); } } },
     fetch: async (url, options = {}) => {
         requests.push({ url, body: options.body && JSON.parse(options.body) });
+        if (url.endsWith('execute')) {
+            if (executeGate) await executeGate;
+            if (executeError) return { ok: false, json: async () => ({ error: executeError }) };
+        }
         const data = url.endsWith('batch/preview') ? { planId: 'batch-id', targets: [{ position, quote }],
             accounts: 1, totalUsd: 10, feeUsd: 1, gasBoostPercent: 2, skipped: [{ accountId: 4, chain: 'arb', reason: 'Adapter unavailable' }] }
             : url.endsWith('preview') ? { planId: 'preview-id', position, quote } : url.endsWith('status') ? current : {};
@@ -64,6 +68,20 @@ async function singlePreview(accept = false) {
     await singlePreview();
     assert(!requests.some(r => r.url.endsWith('execute')), 'Cancelled preview never executes');
     assert(confirmText.includes('0.123456789123456789'), 'Exact token amount survives preview');
+    executeError = 'Set wallet PIN first';
+    const refused = detailButton().onclick(); await flush();
+    await el('defiPreviewConfirm').onclick();
+    assert(el('defiPreview').open, 'Rejected execution keeps the preview open');
+    assert(el('defiPreviewStatus').textContent.includes(executeError), 'Execution refusal is visible inside the preview');
+    executeError = ''; let acceptRequest;
+    executeGate = new Promise(resolve => { acceptRequest = resolve; });
+    const requestCount = requests.length;
+    const starting = el('defiPreviewConfirm').onclick(); await flush();
+    assert(el('defiPreview').open && el('defiPreviewConfirm').disabled && el('defiPreviewCancel').disabled);
+    await el('defiPreviewConfirm').onclick();
+    assert.equal(requests.length, requestCount + 1, 'Repeated confirmation cannot send duplicate execute requests');
+    acceptRequest(); await starting; await refused; executeGate = null;
+    assert(!el('defiPreview').open, 'Only server acceptance closes the confirmation');
     quote.outputs = [{ amountRaw: '634406', decimals: 6, symbol: 'USDC.e' },
         { amountRaw: '231691997655196', decimals: 18, symbol: 'WETH' }];
     quote.approval = { destination: position.vaultAddress };

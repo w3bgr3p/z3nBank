@@ -27,7 +27,10 @@ const status = { positions: [base, { ...base, id: 'p2', chain: 'arb', valueUsd: 
             if (url.pathname === '/api/Treasury/defi/status') return route.fulfill({ json: status });
             if (url.pathname === '/api/Treasury/defi/withdraw/preview') return route.fulfill({ json: { planId: 'read-only-test', quote: {
                 amountRaw: '1161942500000000', decimals: 18, symbol: 'WETH', valueUsd: 3.1573, feeUsd: .0005249, l1FeeUsd: .00000155 } } });
-            if (url.pathname.endsWith('/execute')) executionRequests++;
+            if (url.pathname.endsWith('/execute')) {
+                executionRequests++;
+                return route.fulfill({ status: 400, json: { error: 'Set wallet PIN first' } });
+            }
             if (route.request().method() !== 'GET') return route.fulfill({ status: 409, json: { error: 'Financial execution disabled in layout test' } });
             return route.continue();
         });
@@ -78,6 +81,12 @@ const status = { positions: [base, { ...base, id: 'p2', chain: 'arb', valueUsd: 
         await page.screenshot({ path: 'bin/TokenValidation/defi-confirmation.png' });
         await page.locator('#defiPreviewCancel').click();
         assert.equal(nativeDialogs, 0); assert.equal(executionRequests, 0, 'Cancelling never executes a withdrawal');
+        await page.locator('#defiRows button').first().click();
+        await page.locator('#defiPreviewConfirm').click();
+        await page.locator('#defiPreviewStatus').filter({ hasText: 'Set wallet PIN first' }).waitFor();
+        assert(await page.locator('#defiPreview').isVisible(), 'Refused execution stays visible instead of disappearing');
+        assert.equal(executionRequests, 1);
+        await page.locator('#defiPreviewCancel').click();
         await page.locator('#defiClose').click();
         await page.locator('#defiProtocol').selectOption('Test Vault');
         await page.locator('#defiAccounts').fill('1-2'); await page.locator('#defiSelectRange').click();

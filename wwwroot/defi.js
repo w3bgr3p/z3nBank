@@ -1,5 +1,5 @@
 (() => {
-    let state = null, timer, busy = false, message = '', detail = null;
+    let state = null, timer, busy = false, message = '', detail = null, confirmationPending = false;
     const selected = new Set(), protocolsSelected = new Set(), el = id => document.getElementById(id);
     const view = document.createElement('section');
     view.id = 'defiPanel'; view.className = 'defi-view'; view.hidden = true;
@@ -31,7 +31,7 @@
     document.body.append(modal);
     const preview = document.createElement('dialog'); preview.id = 'defiPreview'; preview.className = 'defi-panel';
     preview.innerHTML = `<div class="defi-heading"><strong id="defiPreviewTitle">Batch withdrawal preview</strong><button id="defiPreviewCancel">Cancel</button></div>
-        <p id="defiPreviewSummary"></p><div class="defi-table-wrap" id="defiPreviewRows"></div>
+        <p id="defiPreviewSummary"></p><div id="defiPreviewStatus" role="status" aria-live="polite"></div><div class="defi-table-wrap" id="defiPreviewRows"></div>
         <p id="defiPreviewNote">Underlying tokens return to each wallet. Transactions run sequentially; an unknown transaction outcome stops the queue.</p>
         <button id="defiPreviewConfirm">Confirm withdrawal</button>`;
     document.body.append(preview);
@@ -53,13 +53,15 @@
         if (open) {
             el('defiMaxId').value = el('maxIdInput').value;
             el('defiGas').value = String(window.getGasBoostPercent()); poll();
-        } else { clearTimeout(timer); modal.close(); preview.close(); }
+        } else { clearTimeout(timer); modal.close(); if (!confirmationPending) preview.close(); }
     };
     for (const dialog of [modal, preview]) dialog.addEventListener('click', e => {
         if (e.target !== dialog) return;
+        if (dialog === preview && confirmationPending) return;
         const r = dialog.getBoundingClientRect();
         if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) dialog.close();
     });
+    preview.addEventListener('cancel', event => { if (confirmationPending) event.preventDefault(); });
     el('defiClose').onclick = () => modal.close();
     el('defiInfoToggle').onclick = () => { el('defiInfo').hidden = !el('defiInfo').hidden; };
     const filtered = () => (state?.positions || []).filter(p => protocolsSelected.size ? protocolsSelected.has(p.protocol) : !el('defiProtocol').value || p.protocol === el('defiProtocol').value);
@@ -246,14 +248,14 @@
             const plan = await api('withdraw/preview', { accountId: position.accountId, positionId: position.id, gasBoostPercent: gas() });
             const q = plan.quote;
             if (await confirmBatch({ targets: [{ position, quote: q }], skipped: [], accounts: 1,
-                totalUsd: q.valueUsd, feeUsd: q.feeUsd, gasBoostPercent: gas() }, true)) {
-                await api('withdraw/execute', plan.planId); message = ''; await poll();
+                totalUsd: q.valueUsd, feeUsd: q.feeUsd, gasBoostPercent: gas() }, true, () => api('withdraw/execute', plan.planId))) {
+                message = ''; await poll();
             } else message = 'Withdrawal cancelled before signing.';
         } catch (e) { message = e.message; }
         finally { busy = false; render(); }
     }
     const money = value => '$' + Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 8 });
-    function confirmBatch(plan, single = false) {
+    function confirmBatch(plan, single = false, execute) {
         preview.className = single ? 'defi-panel defi-confirm' : 'defi-panel';
         el('defiPreviewTitle').textContent = single ? 'Confirm withdrawal' : 'Batch withdrawal preview';
         el('defiPreviewNote').textContent = single ? 'Underlying tokens return to the wallet shown above.' :
@@ -290,11 +292,23 @@
             line.textContent = `#${skipped.accountId} · ${skipped.chain} · Skipped: ${skipped.reason}`; el('defiPreviewRows').append(line);
         }
         el('defiPreviewConfirm').disabled = !plan.targets.length;
+        el('defiPreviewCancel').disabled = false; el('defiPreviewStatus').textContent = '';
         return new Promise(resolve => {
             let accepted = false;
             preview.addEventListener('close', () => resolve(accepted), { once: true });
             el('defiPreviewCancel').onclick = () => preview.close();
-            el('defiPreviewConfirm').onclick = () => { if (plan.targets.length) { accepted = true; preview.close(); } };
+            el('defiPreviewConfirm').onclick = async () => {
+                if (!plan.targets.length || confirmationPending) return;
+                confirmationPending = true;
+                el('defiPreviewConfirm').disabled = true; el('defiPreviewCancel').disabled = true;
+                el('defiPreviewStatus').textContent = 'Starting withdrawal…';
+                try { await execute(); accepted = true; preview.close(); }
+                catch (error) { el('defiPreviewStatus').textContent = `Could not start withdrawal: ${error.message}`; }
+                finally {
+                    confirmationPending = false;
+                    el('defiPreviewConfirm').disabled = false; el('defiPreviewCancel').disabled = false;
+                }
+            };
             preview.showModal();
         });
     }
@@ -302,7 +316,7 @@
         busy = true; message = 'Checking selected accounts…'; buttons();
         try {
             const plan = await api('batch/preview', { protocol: el('defiProtocol').value, accountIds: [...selected], gasBoostPercent: gas() });
-            if (await confirmBatch(plan)) { await api('batch/execute', plan.planId); message = ''; await poll(); }
+            if (await confirmBatch(plan, false, () => api('batch/execute', plan.planId))) { message = ''; await poll(); }
             else message = 'Batch cancelled before signing.';
         } catch (e) { message = e.message; }
         finally { busy = false; render(); }
