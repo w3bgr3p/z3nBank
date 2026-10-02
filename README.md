@@ -3,7 +3,150 @@
 
 **Multi-chain cryptocurrency treasury management dashboard with GitHub-style heatmap visualization**
 
-z3nBank is a powerful Windows desktop application for managing and visualizing multi-chain crypto portfolios. It provides real-time balance tracking, cross-chain bridging, token swapping, and an intuitive heatmap interface inspired by GitHub's contribution graph.
+z3nBank is a Windows desktop application for managing and visualizing multi-chain crypto portfolios. It displays saved balance snapshots, supports explicit balance updates, cross-chain bridging, and token swapping.
+
+Database connection errors remain in the startup/settings dialog without clearing entered fields.
+PostgreSQL authentication, missing databases and connectivity failures have readable messages;
+failed settings changes preserve the existing working connection. Password and wallet PIN fields show
+a Caps Lock indicator, including its current Windows state when the field gains focus.
+
+RPC transaction handling: the app signs locally and logs the transaction hash before broadcasting.
+A lost broadcast response is checked against that exact hash without resending. If the result remains unknown,
+the queue stops and keeps the hash for on-chain inspection. A confirmed revert remains a failed transaction.
+The app checks native funds for transaction value plus estimated gas, including the gas-limit buffer;
+valuable ERC-20 tokens cannot pay native gas. BSC uses official `bsc-dataseed.bnbchain.org`, with
+`bsc-dataseed1.bnbchain.org` for fallback receipt checks. Read availability does not guarantee broadcast availability.
+
+### DeFi positions and withdrawals
+
+Open **DeFi** in the header and select **Scan accounts**. No API key, subscription or paid API is required.
+The scanner calls Rabby's public `/v1/user/complex_protocol_list` endpoint, also used in the
+[official Rabby API client](https://github.com/RabbyHub/rabby-api/blob/main/src/index.ts).
+Scanning uses Max ID and all provider-supported networks, independently of the treasury chain filter.
+Transient 429/503 responses have bounded retries within a 30-second budget per account. Account errors,
+including access/rate-limit errors and request timeouts, remain visible and the scan continues to the next wallet.
+Only an explicit stop cancels the batch; errored accounts keep unknown balances rather than reporting zero.
+There is no paid fallback. Public endpoint availability and limits may change.
+Rabby uses DeBank data: this is a free discovery source, not independent validation. Withdrawal limits are checked directly via RPC.
+
+The **DeFi** tab fills the workspace with an account-by-network heatmap. Cells show estimated net USD;
+loans are subtracted and unknown prices or unscanned accounts are marked `?`. Click a network cell for that
+account's positions in the network, or its total for all networks. The Protocol selector filters both totals and details.
+Details show deposited, staked, locked, reward, LP and loan positions. Amounts and USD values are provider estimates,
+not proof of a withdrawable balance. LP legs share a group ID visible in the row tooltip.
+DeFi values are not added to the wallet total: receipt tokens may already be included there.
+The right sidebar follows Treasury: protocol totals, unique account counts, distribution bars, chain totals and
+portfolio summary. Click protocol cards to select multiple protocols; click again to deselect or use **Clear protocols**.
+Debt is subtracted and unknown prices stay marked `?`. Batch withdrawal requires exactly one protocol.
+Results, account progress, scan time and errors are checkpointed in the connected database's `_defi_snapshot`
+table after each account and restored when opening DeFi after a restart. Interrupted scans retain partial results;
+pending/error accounts remain unknown. Saved positions are matched to current wallet addresses and never shared
+across databases. Restarting does not resume scans, withdrawal queues or confirmation plans. A transaction marks
+the saved snapshot as requiring a new scan before another withdrawal; fresh RPC checks still precede every exit.
+
+STG locks can now be withdrawn from verified Stargate escrows on Ethereum, BSC, Optimism and Arbitrum once
+the lock expires. The adapter checks the lock against the latest block timestamp, verifies the STG token and
+simulates `withdraw()` before confirmation. An unexpired lock shows its unlock time. Optimism reserves L1
+data and operator fees via its official gas oracle. See [Stargate VotingEscrow](https://github.com/stargate-protocol/stargate-dao/blob/main/contracts/VotingEscrow.sol)
+and [Optimism fee documentation](https://docs.optimism.io/op-stack/transactions/fees).
+
+LFJ sJOE on Arbitrum also supports a separate USDC.e reward claim using `withdraw(0)`; JOE remains staked.
+The pending reward, funding, simulation and cost are checked before signing. A normal JOE withdrawal also
+harvests rewards. Compound V3 supports the verified Polygon USDC.e market in addition to Scroll; both `:yield`
+and `:lending` provider suffixes normalize to the underlying market address. Polygon now uses the keyless
+PublicNode RPC because the former `polygon-rpc.com` endpoint rejects unauthenticated requests.
+
+PancakeSwap V3, Curve, Merkl and Hana positions are no longer incorrectly offered ERC-4626 withdrawal checks.
+Their details explain the required NFT exit, pool exit, reward proof or lending adapter. Stargate LP/farm exits
+and Compound reward claims also remain unsupported; STG escrow withdrawal and supplied Compound assets
+have separate verified paths.
+
+**Check withdrawal** attempts a direct synchronous [ERC-4626](https://eips.ethereum.org/EIPS/eip-4626) withdrawal.
+Currently this supports Ethereum, BSC, Gnosis, Polygon, Avalanche and Blast. The contract must expose the matching underlying asset
+and a positive `maxWithdraw(owner)`. The app simulates the exact withdrawal, checks gas and fresh asset prices,
+shows a preview, and requires explicit confirmation. It withdraws the displayed underlying amount to the same wallet;
+it does not swap the result to native currency. The selected Gas +% applies. The fee must be below the output value.
+Before signing, limits, simulation and fee are checked again; a fee increase above 10% requires a new preview.
+Stop withdrawal stops further work/receipt tracking, but cannot undo a broadcast transaction.
+
+For **Withdraw selected**, choose one Protocol and click account IDs, **Select visible**, or a range
+of accounts. Selected IDs are highlighted; clicking again deselects the account. You can enter a range
+such as `1-100, 105` with **Select batch**. The preview checks up to 200 protocol positions, groups duplicate vault
+legs, and lists ready withdrawals, amounts, fees and reasons for skipping unsupported or uneconomic positions.
+Confirming starts a sequential queue restricted to that exact protocol and account batch. Each position is checked
+again before signing. **Stop scan / check** cancels scanning or batch preview; **Stop withdrawal** stops the queue.
+An unknown transaction outcome halts the queue and preserves transaction information for inspection.
+Scan progress/results, preview checks, skipped positions, withdrawal errors and queue stops are sent to the
+shared **Logs** drawer with the account ID. DeFi has no separate log panel. Position and confirmation dialogs
+are centered in the viewport. Scan again after broadcasting before another batch.
+
+**SynFutures V3 on Blast:** the adapter withdraws free WETH/USDB deposits from the official Gate contract
+`0x6A372dBc1968f4a07cf2ce352f410962A972c257`, using live `reserveOf(token, wallet)` and `withdraw(bytes32)`
+as specified in the [official Oyster SDK](https://github.com/SynFutures/oyster-sdk).
+It does not close leveraged positions or remove LP ranges. WETH returns as WETH, USDB as USDB.
+Single withdrawals and protocol batches use the same adapter and execution checks.
+Blast previews query `GasPriceOracle.getL1Fee` on the unsigned RLP transaction and reserve an extra 25% for
+L1 data costs; total fees and required native funds include this amount. The oracle already includes signature overhead.
+No key or signature is used during preview; a missing L1 estimate blocks execution.
+
+**Aave V3:** verified Ethereum and Polygon Pool markets use `withdraw(asset, amount, wallet)` rather than ERC-4626.
+The preview reads account debt and simulates the full withdrawal to discover the live supplied amount, then freezes
+an exact underlying amount. Accounts with active debt are blocked to protect collateral. Batches keep separate
+underlying assets within the same market; balances, simulation and fees are checked again before signing.
+
+**LFJ sJOE on Arbitrum:** the verified staking contract uses `joe()`, `getUserInfo(wallet, token)` and `withdraw(amount)`.
+Live stake and token identity are verified; normal withdrawal also triggers the contract's reward distribution.
+The fee comparison conservatively values the JOE output alone. Arbitrum's `eth_estimateGas` includes L1 posting gas,
+so it is counted once in the total fee. Aliases `arb`, `era`, `op`, `eth`, `matic`, `avax` and `xdai` resolve to configured RPCs.
+
+**Blackwing BSC launch vault:** the adapter verifies the proxy implementation, reads live vault shares and the
+deposit lock, and uses `withdraw(asset, vaultShares)`. Underlying amounts are read from the contract, independently
+of the cached portfolio. No approval is needed. Owner-disabled withdrawals and unavailable deployed liquidity
+block the simulation. Implementation upgrades block automatic withdrawal until verified again.
+Source: [verified launch vault](https://sourcify.dev/server/v2/contract/56/0xc6ade8a68026d582ab37b879d188caf7e405dd09?fields=abi,sources).
+
+**SyncSwap zkSync Era classic LP:** the adapter verifies pool type, master, vault, factory registration and both
+underlying tokens. Router `burnLiquidity` returns both ERC20 assets to the same wallet (WETH stays wrapped), with
+0.5% minimum-output protection. Both legs are displayed in single/batch previews; a pool is withdrawn once per account.
+If allowance is missing, preview includes an exact-share approval and a conservative 3,000,000-gas withdrawal
+reserve before the normal 10% gas buffer. The withdrawal is not yet simulated in that case: outputs follow the
+verified pool's fee/dilution formula. Approval spends gas; after its receipt the withdrawal is simulated and priced
+again, and changed minimum outputs or excessive total fees stop execution. Cancellation or unknown receipts halt the queue.
+Era's gas estimate includes execution and pubdata; regular EOA legacy transactions use the existing signer.
+Sources: [router and pool contracts](https://github.com/syncswap/core-contracts),
+[official deployments](https://docs.syncswap.xyz/api-documentation/resources/smart-contract),
+[Era transaction types](https://docs.zksync.io/zksync-protocol/era-vm/transactions/transaction-lifecycle).
+
+**Scroll lending:** `scrl` resolves to the configured Scroll RPC. Rabby native token IDs become the zero address;
+Compound's exact `:lending` suffix is removed from valid contract addresses. Group identities and displayed amounts stay intact.
+The verified Aave V3 Scroll Pool and Compound V3 USDC Comet support supplied-asset withdrawals. Both block
+accounts with active debt and reject withdrawals whose fees exceed the received value, including tiny leftovers.
+LayerBank's verified Scroll Core uses `redeemToken(market, shares)` for ETH/USDC supplies, with live shares,
+underlying/core identity checks, debt protection and read-only simulation. An empty market reports unavailable
+protocol liquidity rather than a generic contract error. Scroll LAB.s rewards with missing provider prices use a cached
+free LI.FI token price, shown as an estimate. Failure to obtain a price preserves the amount and unknown valuation.
+The verified LayerBank reward controller supports withdrawal of unlocked rewards only. Checks read the live unlocked
+balance; they never start vesting or accept an early-exit penalty. Accrued rewards that require claiming into vesting
+remain a separate flow. Reward withdrawals retain the same fresh simulation and fee/output guards as deposits.
+Scroll fees query the official L1 oracle with a full-size RLP signature reserve (no signing), plus a 25% L1 fee buffer.
+Sources: [LayerBank contracts/deployments](https://github.com/layerbank-foundation/v2-contracts),
+[Aave Scroll address book](https://github.com/aave-dao/aave-address-book/blob/main/src/AaveV3Scroll.sol),
+[Compound Scroll deployment](https://github.com/compound-finance/comet/blob/main/deployments/scroll/usdc/roots.json),
+[Scroll fee oracle](https://docs.scroll.io/en/developers/transaction-fees-on-scroll/).
+
+Single-withdrawal confirmation uses a centered application dialog matching the other DeFi popups, with wallet,
+output amounts, network fee and L1 fee displayed separately. Small fee amounts retain up to eight decimal places.
+Cancel, Escape or clicking outside the dialog does not execute the prepared withdrawal.
+
+Unverified Blackwing vaults, SyncSwap stable/staked pools and Balancer liquidity still require dedicated adapters.
+Click **Adapter unavailable · details** for the reason; these positions are not sent to ERC-4626 methods.
+
+This is not universal unstaking. LP exits, staking farms, collateral withdrawal, claim rewards and asynchronous withdrawal queues
+need separate adapters. Other L2 automatic withdrawals remain blocked until their additional fees are supported.
+[Enso withdrawal routes](https://docs.enso.build/pages/use-cases/deposits/withdrawal) are a possible further adapter,
+but are not implemented in this version. [Lido](https://docs.lido.fi/contracts/withdrawal-queue-erc721/) requires separate request/claim stages.
+Coverage of discovery does not imply coverage of execution. The scanner uses the
+[Rabby complex protocol API](https://github.com/RabbyHub/rabby-api/blob/main/src/index.ts).
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![.NET](https://img.shields.io/badge/.NET-8.0-purple.svg)
@@ -60,7 +203,7 @@ z3nBank is built as a hybrid desktop application:
 │                                     │
 │  ┌───────────────────────────────┐  │
 │  │   ASP.NET Core Backend        │  │
-│  │   - REST API (Port 5000)      │  │
+│  │   - REST API (dynamic port)  │  │
 │  │   - TreasuryController        │  │
 │  │   - Database Service          │  │
 │  │   - Logging Service           │  │
@@ -161,7 +304,7 @@ Before performing DeFi operations, set your wallet PIN:
 
 1. Click the "Import Wallets" button
 2. Paste wallet addresses (one per line)
-3. The system will automatically fetch balances
+3. Run **Update Balances** to fetch a new balance snapshot
 
 ### Viewing Your Portfolio
 
@@ -181,11 +324,15 @@ Hover over any cell to see:
 **Manual Refresh:**
 - Click the 🔄 Refresh button
 - Enter max account ID to scan
-- System fetches latest balances from blockchain
+- **Refresh** reloads the saved database snapshot; **Update Balances** fetches new token amounts and prices from LI.FI
 
 **Auto-refresh:**
 - Click "Auto: OFF" to toggle automatic updates
-- Refreshes every 30 seconds when enabled
+- Reloads the database view every 5 seconds; this does not fetch new blockchain balances
+
+Successful balance updates replace the entire wallet snapshot, including chains that are now empty. Failed requests keep the previous data and appear in the update status. Only positive token values above the requested minimum are stored. The public LI.FI API allows 10 requests per minute; updates are paced and HTTP 429 responses are retried after waiting.
+
+USD values are estimates from token amounts and API prices, before fees and slippage. Cached USD totals are recalculated on read. Legacy DeBank records use a different amount format and must be refreshed before they can be included. Tokens flagged as denied or malicious by the provider are excluded; unverified tokens may still be returned.
 
 ### Filtering by Chains
 
@@ -236,7 +383,7 @@ The **Logs Panel** shows:
 
 ## 🎯 API Endpoints
 
-The embedded API server runs on `http://127.0.0.1:5000`
+The embedded API server binds to `http://127.0.0.1:0`. Windows selects a free port; the application prints and opens the actual selected URL.
 
 ### Database Configuration
 
@@ -257,7 +404,8 @@ GET /api/treasury/chains
 ### Operations
 
 ```http
-POST /api/treasury/update-balances
+POST /api/treasury/update?maxId=100&minValue=0.001
+GET  /api/treasury/update-status
 POST /api/treasury/swap-chains
 POST /api/treasury/bridge-chains
 POST /api/treasury/import-wallets
@@ -302,7 +450,6 @@ POST /api/treasury/clear
 ### Environment Variables (Optional)
 
 ```env
-ASPNETCORE_URLS=http://127.0.0.1:5000
 WEBVIEW2_USER_DATA_FOLDER=%LOCALAPPDATA%\z3nBank\WebView2
 ```
 
@@ -479,7 +626,7 @@ A: No. The encryption is hardware-bound. If you move the database to different h
 A: You will lose access to the encrypted private keys in the database. This is why it's critical to keep backup copies of your original mnemonics/private keys outside the application.
 
 **Q: Which blockchain networks are supported?**
-A: The application supports all EVM-compatible networks configured in your database, plus Solana (SOL) wallets.
+A: Balance updates use the EVM chains returned by LI.FI. The current dashboard does not fetch Solana wallet balances.
 
 **Q: Can I use this on macOS or Linux?**
 A: Currently only Windows is supported. Porting to other OS would require adapting the hardware ID detection and possibly switching to Avalonia or Electron.
@@ -498,6 +645,37 @@ A: Fees depend on the selected protocol (Relay/LiFi) and current gas prices on t
 ---
 
 ## ⚡ Quick Tips
+
+### Selected token operations
+
+- Click tokens in the right panel to select multiple symbols and highlight their cells. A second click deselects
+  only that token; **Clear token selection** resets all highlights. The panel includes all tokens, sorted by value.
+- Selecting a token automatically selects every account holding it. Click account IDs to exclude accounts
+  from the batch swap or include them again. Token presence highlights remain visible for excluded accounts.
+  Adding another token preserves manual exclusions; removing a token keeps accounts holding any remaining selected token.
+  Clearing the token selection also clears its account selection and exclusions.
+  Selected IDs are highlighted. **Clear accounts** resets this selection, and no selection disables the batch swap.
+- **Swap selected → native** previews the combined contract selection only for selected accounts and networks.
+  The server restricts both preview and execution to the selected account IDs.
+  DeFi uses the same Treasury heatmap levels: below $1, $1–10, $10–100 and $100+; debt stays marked separately.
+- **Swap token → native** previews the exact contracts, networks and accounts before confirmation.
+- The queue obeys **Max ID**, selected networks and **Min. USD**, uses the selected Relay/LiFi service,
+  and swaps each listed contract's full live balance to the native token in the same network.
+- Symbols can refer to different contracts: review the contract addresses in the confirmation.
+- Native tokens are skipped. **Exclude Stables** applies to the existing swap-all action;
+  explicitly selecting a stablecoin allows swapping that selected token.
+- Set the wallet PIN first. Execution reads the on-chain balance and reports swapped, failed and skipped positions.
+- Successful swaps refresh the account snapshot; refresh failures are reported separately.
+- All swaps to native compare total estimated fees (network gas, required approval and route fees)
+  against the quoted minimum output value. Expensive swaps and quotes with incomplete cost data are skipped before execution.
+- **Logs** opens a bottom overlay without reserving table space. Click outside it, press Escape or click Close to hide it.
+- **Stop swaps** cancels active account swaps and the selected-token queue, including receipt waits and retry delays.
+- **Gas +%** adds the selected percentage to the current RPC gas price for approvals, swaps and bridges.
+  For example, 0.06 Gwei with +2% becomes 0.0612 Gwei. The saved default remains the previous +20%; 0 uses the network price.
+  The execution preview freezes this setting, and the fee guard uses the same percentage.
+  Broadcast transactions cannot be undone; their hashes remain in Logs for on-chain verification.
+- Receipt checks switch to a BSC fallback RPC on access errors. Three consecutive RPC failures halt the queue,
+  report the underlying error and transaction hash, and require checking the transaction before restarting.
 
 - **Keyboard Shortcut**: Press `Ctrl + H` for help
 - **Fast Navigation**: Click on any heatmap cell to see details

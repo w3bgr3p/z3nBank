@@ -128,7 +128,7 @@ public class RelayBridgeAdapter : IBridgeClient
                 Details = stepsSummary
             };
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException && ex is not ReceiptUnavailableException)
         {
             _log?.Send($"❌ Ошибка выполнения Relay bridge: {ex.Message}");
             
@@ -137,6 +137,7 @@ public class RelayBridgeAdapter : IBridgeClient
                 Success = false,
                 Status = "failed",
                 TxHash = null,
+                Error = SwapExecution.ErrorDetails(ex),
                 Details = $"Error: {ex.Message}"
             };
         }
@@ -224,33 +225,39 @@ public class DeFi
     /// <summary>
     /// Обменивает все токены на нативную валюту в каждой сети
     /// </summary>
-    public static async Task SwapAllTokensNative(Db db, int id, decimal minValue, string pin, 
+    public sealed record SwapResult(int Succeeded, int Failed, string? Error = null);
+
+    public static async Task<SwapResult> SwapAllTokensNative(Db db, int id, decimal minValue, string pin,
         bool excludeStables = false, Protocol clientType = Protocol.LiFi, int delayMs = 108,
-         string chains = null, Logger log = null, string integrator = null, decimal? fee = null)
+         string chains = null, Logger log = null, string integrator = null, decimal? fee = null,
+         IReadOnlySet<string>? tokenTargets = null, string? expectedWallet = null)
     {
         int successCount = 0;
         int failCount = 0;
         
         try
         {
+            SwapExecution.Check();
             var key = await GetKey(db, id, pin);
             if (string.IsNullOrEmpty(key))
             {
                 log?.Send("❌ Error: Private key not found", "ERROR");
-                return;
+                return new SwapResult(0, 0, "Private key not found");
             }
 
-            var jumper = new Jumper(log);
-            var chainNames = await jumper.GetChainMapping();
+            using var jumper = new Jumper(log);
+            var chainNames = await SwapExecution.Read(jumper.GetChainMapping());
             chainNames = FilterChains(chainNames, filter: chains);
             
             var account = new Account(key);
-            var bal = await jumper.GetBalances(account.Address);
+            if (expectedWallet != null && !account.Address.Equals(expectedWallet, StringComparison.OrdinalIgnoreCase))
+                return new SwapResult(0, 0, "Private key does not match the confirmed wallet");
+            var bal = await SwapExecution.Read(jumper.GetBalances(account.Address));
             
             if (bal?.Balances == null || !bal.Balances.Any())
             {
                 log?.Send($"👛 {account.Address} | ⚠️ No balances found", "WARNING");
-                return;
+                return new SwapResult(0, 0, "No live balances found");
             }
 
             log?.Send($"Checking {account.Address} | Client: {clientType} | Chains: {bal.Balances.Count}/{string.Join(", ", chainNames.Values)}");
@@ -259,6 +266,7 @@ public class DeFi
 
             foreach (var chain in bal.Balances)
             {
+                SwapExecution.Check();
                 if (!int.TryParse(chain.Key, out int chainIdInt)) continue;
                 if (!chainNames.ContainsKey(chainIdInt)) continue;
                 
@@ -266,8 +274,8 @@ public class DeFi
                 
                 var tokensToSwap = chain.Value.Where(t => 
                     t.ValueUSD > minValue && 
-                    t.Address != "0x0000000000000000000000000000000000000000" && 
-                    t.Address != "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
+                    !TokenSelection.IsNative(t.Address) &&
+                    (tokenTargets == null || tokenTargets.Contains(TokenSelection.Key(chainIdInt, t.Address)))
                 ).ToList();
 
                 if (!tokensToSwap.Any()) continue;
@@ -276,6 +284,7 @@ public class DeFi
                 if (string.IsNullOrEmpty(rpcUrl))
                 {
                     log?.Send($"❌ {chainName} | Skip: No RPC URL", "ERROR");
+                    failCount += tokensToSwap.Count;
                     continue;
                 }
 
@@ -284,6 +293,7 @@ public class DeFi
 
                 foreach (var token in tokensToSwap)
                 {
+                    SwapExecution.Check();
                     
                     try
                     {
@@ -300,8 +310,8 @@ public class DeFi
                         }
                         else
                         {
-                            actualBalanceRaw = await web3.Eth.GetContractQueryHandler<BalanceOfFunction>()
-                                .QueryAsync<BigInteger>(token.Address, new BalanceOfFunction { Owner = account.Address });
+                            actualBalanceRaw = await SwapExecution.Read(web3.Eth.GetContractQueryHandler<BalanceOfFunction>()
+                                .QueryAsync<BigInteger>(token.Address, new BalanceOfFunction { Owner = account.Address }));
                         }
                         
                         if (actualBalanceRaw <= 0) 
@@ -310,7 +320,7 @@ public class DeFi
                             continue; 
                         }
                         
-                        await Task.Delay(delayMs);
+                        await SwapExecution.Delay(delayMs);
 
                         var quoteRequest = new BridgeQuoteRequest
                         {
@@ -325,7 +335,15 @@ public class DeFi
                             Fee = fee?.ToString()
                         };
                         
-                        var quote = await bridgeClient.GetQuoteAsync(quoteRequest);
+                        var quote = await SwapExecution.Read(bridgeClient.GetQuoteAsync(quoteRequest));
+                        var costs = await SwapExecution.Read(SwapCostGuard.CheckAsync(quote, web3, account.Address));
+                        if (!costs.Allowed)
+                        {
+                            log?.Send($"Skip {opInfo} | {costs.Reason}", "WARNING");
+                            continue;
+                        }
+                        log?.Send($"{opInfo} | {costs.Reason}", "INFO");
+                        SwapExecution.Check();
                         var result = await bridgeClient.ExecuteAsync(account, quote, web3);
 
                         if (result.Success)
@@ -339,7 +357,7 @@ public class DeFi
                             log?.Send($"❌ {opInfo} | Error: {result.Error}", "ERROR");
                         }
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is not OperationCanceledException && ex is not ReceiptUnavailableException)
                     {
                         failCount++;
                         log?.Send($"❌ {chainName} {token.Symbol} | {ex.Message}", "ERROR");
@@ -348,10 +366,12 @@ public class DeFi
             }
             
             log?.Send($"🏁 Done | Total: {successCount + failCount} | Success: {successCount} | Fail: {failCount}");
+            return new SwapResult(successCount, failCount);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException && ex is not ReceiptUnavailableException)
         {
             log?.Send($"🚨 Critical: {ex.Message}", "CRITICAL");
+            return new SwapResult(successCount, failCount, ex.Message);
         }
     }
 
@@ -452,7 +472,7 @@ public class DeFi
                         if (nativeAddresses.Contains(token.Address.ToLower()))
                         {
                             var gasPrice = await web3.Eth.GasPrice.SendRequestAsync();
-                            BigInteger gasReserve = gasPrice.Value * 400000;
+                            BigInteger gasReserve = GasPricing.Price(gasPrice.Value) * 400000;
                             
                             var balance = await web3.Eth.GetBalance.SendRequestAsync(account.Address);
                             
@@ -525,7 +545,7 @@ public class DeFi
             .ToDictionary(item => item.Key, item => item.Value);
     }
 
-    private static async Task<string> GetKey(Db db, int id, string pin)
+    internal static async Task<string> GetKey(Db db, int id, string pin)
     {
         try
         {

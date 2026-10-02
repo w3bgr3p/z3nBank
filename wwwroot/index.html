@@ -3,10 +3,13 @@
 <head>
     <meta charset='UTF-8'>
     <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-    <title>z3nTreasury</title>
+    <title>z3nBank | Treasury</title>
+    <link rel="stylesheet" href="css/themes.css">
+    <script src="design.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/@sweetalert2/theme-dark@4/dark.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="css/bank.css">
 </head>
 <body>
 <div id="loadingOverlay" class="loading-overlay">
@@ -14,7 +17,7 @@
 </div>
 
 <div class='header'>
-    <h1>z3nBank</h1>
+    <h1>z3nBank <span class="page-name">Treasury</span></h1>
     <div class='stats-bar'>
         <div class='stat-item'>
             <span class='stat-label'>Accounts:</span>
@@ -29,17 +32,33 @@
             <span class='stat-value' id='totalChains'>-</span>
         </div>
         <div class='stat-item'>
-            <span class='stat-label'>Total:</span>
+            <span class='stat-label' title='Token amounts multiplied by API prices. Estimated value, before fees and slippage.'>Est. USD:</span>
             <span class='stat-value' id='totalValue'>$0</span>
         </div>
+    </div>
+    <div class="header-right">
+        <button onclick="setDb()" title="Database settings · Ctrl+Shift+D">Database</button>
+        <button onclick="importWallets()" title="Import wallets · Ctrl+Shift+I">Import</button>
+        <button onclick="setPin()" title="Wallet PIN · Ctrl+Shift+P">PIN</button>
+        <button id="treasuryTab" onclick="setDefiOpen(false)" role="tab" aria-selected="true">Treasury</button>
+        <button id="defiToggle" onclick="setDefiOpen(true)" role="tab" aria-controls="defiPanel" aria-selected="false">DeFi</button>
+        <select id="themeSelect" aria-label="Color theme" onchange="setBankTheme(this.value)">
+            <option value="dark">Dark</option><option value="graphite">Graphite</option>
+            <option value="light">Light</option><option value="hyper">Hyper</option>
+        </select>
+        <button onclick="showHelp()" title="Help · Ctrl+H">Help</button>
+        <button onclick="toggleBankLogs()" aria-expanded="false" aria-controls="logsPanel" id="logsToggle">Logs</button>
     </div>
 </div>
 
 <div class='controls'>
-    <button onclick="refreshData()">🔄 Refresh</button>
-    <button onclick="toggleAutoRefresh()">⏸️ Auto: <span id="autoStatus">OFF</span></button>
+    <button onclick="refreshData()">Refresh</button>
+    <button onclick="toggleAutoRefresh()">Auto: <span id="autoStatus">OFF</span></button>
+    <span class="toolbar-sep"></span>
+    <label for="maxIdInput">Max ID</label>
     <input type="number" id="maxIdInput" value="100" min="10" max="10000" placeholder="Max ID">
-    <button onclick="updateBalances()" class="danger">⚡ Update Balances</button>
+    <button id="updateBalancesButton" onclick="updateBalances()" class="primary">Update Balances</button>
+    <span id="balanceUpdateStatus" role="status" style="color: #8b949e;"></span>
     <div class="custom-multiselect" id="chainMultiselect">
         <div class="select-box" onclick="toggleMultiselect()">
             <span id="selectedChainsLabel">All Chains</span>
@@ -48,26 +67,38 @@
         <div class="checkboxes" id="chainCheckboxes">
         </div>
     </div>
-    <label style="margin-left: 10px; color: #8b949e;">Bridge to:</label>
+    <span class="toolbar-sep"></span>
+    <label for="destinationChainSelect">Bridge to</label>
     <select id="destinationChainSelect" style="padding: 4px 10px; font-size: 10px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; font-family: inherit;">
         <!-- Будет заполнено динамически -->
     </select>
-    <label style="margin-left: 10px; color: #8b949e;">Bridge Service:</label>
+    <label for="protocolSelect">Service</label>
     <select id="protocolSelect" style="padding: 4px 10px; font-size: 10px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; font-family: inherit;">
         <option value="Relay">Relay</option>
         <option value="LiFi">LiFi</option>
     </select>
 
-    <label style="margin-left: 10px; color: #8b949e;">Threshold:</label>
+    <label for="gasBoostInput">Gas +%</label>
+    <input id="gasBoostInput" type="number" value="20" min="0" max="1000" step="0.01" required
+           onchange="saveGasBoost()" title="Percentage added to current network gas price. 0 means network price." style="width: 75px;">
+    <label for="thresholdInput">Min. USD</label>
     <input type="number" id="thresholdInput" value="0.1" min="0" max="1000" step="0.01" placeholder="Threshold" style="width: 80px; padding: 4px 8px; font-size: 10px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; font-family: inherit;">
 
     <label style="margin-left: 10px; color: #8b949e; display: flex; align-items: center; gap: 5px;">
         <input type="checkbox" id="excludeStablesCheckbox" style="cursor: pointer;">
         Exclude Stables
     </label>
-    <div class='stat-item help-highlight'>
-        <span class="stat-value">Ctrl + H for help</span>
-    </div>
+</div>
+
+<div class="controls token-controls">
+    <button id="clearTreasuryAccountsButton" onclick="clearTreasuryAccounts()" disabled>Clear accounts</button>
+    <span id="treasuryAccountSelectionInfo" role="status">0 accounts selected</span>
+    <button id="clearTokenSelectionButton" onclick="clearTreasuryTokens()" disabled>Clear token selection</button>
+    <span id="tokenSelectionInfo" role="status"></span>
+    <button id="swapSelectedTokenButton" onclick="swapSelectedToken()" disabled>Swap selected → native</button>
+    <span id="tokenSwapStatus" role="status"></span>
+    <button id="stopSwapsButton" class="danger" onclick="stopSwaps()" disabled>Stop swaps</button>
+    <span id="swapOperationsStatus" role="status"></span>
 </div>
 
 <div class="main-content">
@@ -79,12 +110,10 @@
         </div>
 
 
-    </div>
-
     <!-- LOGS PANEL -->
-    <div class="logs-panel">
+    <div class="logs-panel" id="logsPanel" hidden aria-label="Logs">
         <div class="logs-header">
-            
+            <span class="logs-title">Logs</span>
             <div class="logs-controls">
                 
                 <button onclick="toggleLogsAutoRefresh()" style="display: none;">⏸️ <span id="logsAutoStatus">ON</span></button>
@@ -105,16 +134,18 @@
                 </select>
                 
                 <input type="number" id="logsLimitInput" value="50" min="10" max="200" style="width: 50px;" onchange="refreshLogs()">
-                <button onclick="clearLogsServer()" class="danger">🗑️</button>
+                <button onclick="clearLogsServer()" class="danger" title="Clear logs">Clear</button>
+                <button onclick="setBankLogsOpen(false)" aria-label="Close logs">Close</button>
             </div>
         </div>
         <div class="logs-content" id="logsContainer"></div>
+    </div>
     </div>
 
     <!-- RIGHT SECTION: Sidebar Stats -->
     <div class="sidebar">
         <div class="sidebar-section">
-            <h3>Top Tokens</h3>
+            <h3>Tokens <span class="token-pick-hint">click to select / clear</span></h3>
             <div class="token-list" id="topTokens">
                 <!-- Filled by JS -->
             </div>
@@ -161,9 +192,14 @@
     console.log('Origin:', window.location.origin);
 </script>
 
+<script src="gas.js"></script>
+<script src="passwords.js"></script>
 <script src="app.js"></script>
 <script src="logs.js"></script>
 <script src="ui-components.js"></script>
+<script src="tokens.js"></script>
+<script src="swaps.js"></script>
+<script src="defi.js"></script>
 
 
 <script>

@@ -1,0 +1,14 @@
+bin/
+obj/
+logs/
+publish-new/
+installer_output/
+/packages/
+riderModule.iml
+/_ReSharper.Caches/
+.idea/
+.vs/
+.gitignore
+z3n.sln.DotSettings.user
+_projects/
+z3n.Admin/

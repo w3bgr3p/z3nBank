@@ -37,6 +37,7 @@ public class DbConnectionService
         {
             try
             {
+                Db candidate;
                 if (config.Type == "sqlite")
                 {
                     Console.WriteLine($"📁 Connecting to SQLite: {config.SqlitePath}");
@@ -54,12 +55,12 @@ public class DbConnectionService
                     config.SqlitePath = path; 
                     
                     
-                    _db = new Db(mode: dbMode.SQLite, sqLitePath: config.SqlitePath);
+                    candidate = new Db(mode: dbMode.SQLite, sqLitePath: config.SqlitePath);
                 }
                 else if (config.Type == "postgres")
                 {
                     Console.WriteLine($"🐘 Connecting to PostgreSQL: {config.Host}:{config.Port}/{config.Database}");
-                    _db = new Db(
+                    candidate = new Db(
                         mode: dbMode.Postgre,
                         pgHost: config.Host,
                         pgPort: config.Port,
@@ -72,15 +73,14 @@ public class DbConnectionService
                 {
                     throw new ArgumentException($"Unsupported database type: {config.Type}");
                 }
-                DBuilder.ImportDbStructure(_db);
+                DBuilder.ImportDbStructure(candidate);
+                _db = candidate;
                 _config = config;
                 Console.WriteLine("✅ Database connected successfully");
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"❌ Database connection failed: {ex.Message}");
-                _db = null;
-                _config = null;
                 throw;
             }
         }

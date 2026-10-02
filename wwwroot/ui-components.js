@@ -81,8 +81,11 @@ async function filterByChainsArray(selected) {
     // Превращаем массив ["ETH", "BSC"] в строку "ETH,BSC"
     const chainsParam = selected.join(',');
 
-    const response = await fetch('/api/treasury/data?maxId=100&chains=' + selected.join(','));
+    const response = await fetch(`${API_BASE}/data?maxId=${encodeURIComponent(maxId)}&chains=${encodeURIComponent(chainsParam)}`);
+    if (!response.ok) throw new Error(`Balances returned ${response.status}`);
     const data = await response.json();
+    treasuryData = data;
+    await updateStats(data);
 
     // Твоя логика отрисовки таблицы/хитмапа
     renderHeatmap(data);

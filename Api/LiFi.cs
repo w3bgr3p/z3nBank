@@ -351,7 +351,7 @@ namespace LiFiBridge
             {
                 try
                 {
-                    var response = await _httpClient.GetAsync(url);
+                    var response = await _httpClient.GetAsync(url, z3nSafe.SwapExecution.Token);
                     response.EnsureSuccessStatusCode();
 
                     var jsonResponse = await response.Content.ReadAsStringAsync();
@@ -365,7 +365,7 @@ namespace LiFiBridge
 
                     return quote;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException && ex is not z3nSafe.ReceiptUnavailableException)
                 {
                     attempts++;
                     _log?.Send($"❌ Попытка {attempts}/{maxAttempts}: {ex.Message}");
@@ -375,7 +375,7 @@ namespace LiFiBridge
                         throw HandleApiError(ex, "GetQuote");
                     }
 
-                    await Task.Delay(2000 * attempts);
+                    await z3nSafe.SwapExecution.Delay(2000 * attempts);
                 }
             }
 
@@ -401,7 +401,7 @@ namespace LiFiBridge
             {
                 try
                 {
-                    var response = await _httpClient.GetAsync(url);
+                    var response = await _httpClient.GetAsync(url, z3nSafe.SwapExecution.Token);
                     response.EnsureSuccessStatusCode();
 
                     var jsonResponse = await response.Content.ReadAsStringAsync();
@@ -409,7 +409,7 @@ namespace LiFiBridge
 
                     return status;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException && ex is not z3nSafe.ReceiptUnavailableException)
                 {
                     attempts++;
                     _log?.Send($"❌ Ошибка получения статуса (попытка {attempts}/{maxAttempts}): {ex.Message}");
@@ -419,7 +419,7 @@ namespace LiFiBridge
                         throw HandleApiError(ex, "GetStatus");
                     }
 
-                    await Task.Delay(2000 * attempts);
+                    await z3nSafe.SwapExecution.Delay(2000 * attempts);
                 }
             }
 
@@ -432,6 +432,7 @@ namespace LiFiBridge
 
         public async Task<ExecutionResult> ExecuteTransferAsync(Account account, QuoteResponse quote, bool waitForCompletion = true, Web3 web3 = null)
         {
+            z3nSafe.SwapExecution.Check();
             _log?.Send($"🚀 Начинаем выполнение трансфера");
             _log?.Send($"   Маршрут: {quote.Action.FromToken.Symbol} ({quote.Action.FromChainId}) → {quote.Action.ToToken.Symbol} ({quote.Action.ToChainId})");
             _log?.Send($"   Инструмент: {quote.Tool}");
@@ -458,7 +459,7 @@ namespace LiFiBridge
 
                 // Ждем подтверждения транзакции
                 _log?.Send($"⏳ Ожидаем подтверждения транзакции...");
-                var receipt = await WaitForTxReceipt(txHash, web3);
+                var receipt = await WaitForTxReceipt(txHash, web3, chainId: quote.Action.FromChainId);
 
                 if (receipt?.Status?.Value == 0)
                 {
@@ -491,7 +492,7 @@ namespace LiFiBridge
                     TxHash = txHash
                 };
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not z3nSafe.ReceiptUnavailableException)
             {
                 //_log?.Send($"❌ Ошибка выполнения: {ex.Message}");
                 return new ExecutionResult
@@ -554,7 +555,7 @@ namespace LiFiBridge
                 var approveTxHash = await SendTxAsync(account, approveTxRequest, web3);
                 
 
-                var approveReceipt = await WaitForTxReceipt(approveTxHash, web3);
+                var approveReceipt = await WaitForTxReceipt(approveTxHash, web3, chainId: chainId);
 
                 if (approveReceipt?.Status?.Value == 0)
                 {
@@ -562,7 +563,7 @@ namespace LiFiBridge
                 }
 
                 _log?.Send($"   ✅ Approve успешно установлен");
-                await Task.Delay(3000);
+                await z3nSafe.SwapExecution.Delay(3000);
             }
             else
             {
@@ -584,14 +585,15 @@ namespace LiFiBridge
 
 
             var networkGasPrice = await web3.Eth.GasPrice.SendRequestAsync();
-            var boostedGasPrice = new HexBigInteger((networkGasPrice.Value * 120) / 100);
+            _log?.Send(z3nSafe.GasPricing.Describe(networkGasPrice.Value), "INFO");
+            var boostedGasPrice = new HexBigInteger(z3nSafe.GasPricing.Price(networkGasPrice.Value));
             txInput.GasPrice = boostedGasPrice;
-            var estimate = await web3.Eth.Transactions.EstimateGas.SendRequestAsync(txInput);
-            txInput.Gas = new HexBigInteger((estimate.Value * 110) / 100);
+            txInput.Gas = await z3nSafe.TransactionGas.EstimateAsync(web3, txInput);
 
             _log?.Send($"   ⛽ Газ: Price={txInput.GasPrice.Value}, Limit={txInput.Gas.Value}");
 
-            var txHash = await web3.Eth.TransactionManager.SendTransactionAsync(txInput);
+            z3nSafe.SwapExecution.Check();
+            var txHash = await z3nSafe.TransactionBroadcast.SendAsync(web3, txInput, txRequest.ChainId, _log);
             return txHash;
         }
         private BigInteger ParseBigIntegerSafe(string value)
@@ -614,7 +616,7 @@ namespace LiFiBridge
                     return result;
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not z3nSafe.ReceiptUnavailableException)
             {
                 //_log?.Send($"{ex.Message} {value}");
                 throw new Exception($"{ex.Message} {value}");
@@ -623,31 +625,11 @@ namespace LiFiBridge
             throw new Exception($"Cannot parse BigInteger from value: {value}");
         }
 
-        private async Task<TransactionReceipt> WaitForTxReceipt(string txHash,  Web3 web3, int maxAttempts = 60)
+        private async Task<TransactionReceipt> WaitForTxReceipt(string txHash, Web3 web3, int maxAttempts = 60, int chainId = 0)
         {
-            //var web3 = await GetWorkingWeb3(chainId, account);
-            var attempts = 0;
-
-            while (attempts < maxAttempts)
-            {
-                try
-                {
-                    var receipt = await web3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(txHash);
-                    if (receipt != null)
-                    {
-                        return receipt;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _log?.Send($"   ⚠️ Ошибка получения receipt (попытка {attempts + 1}/{maxAttempts}): {ex.Message}");
-                }
-
-                attempts++;
-                await Task.Delay(5000);
-            }
-
-            throw new Exception($"Не удалось получить receipt для транзакции {txHash}");
+            return await z3nSafe.ReceiptWaiter.WaitAsync(
+                () => web3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(txHash), txHash, _log, maxAttempts,
+                fallback: z3nSafe.ReceiptWaiter.Fallback(chainId, txHash));
         }
 
         private async Task<StatusResponse> WaitForTransferCompletionAsync(string bridge, int fromChain, int toChain, string txHash, int maxAttempts = 120)
@@ -675,13 +657,13 @@ namespace LiFiBridge
                         return status;
                     }
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException && ex is not z3nSafe.ReceiptUnavailableException)
                 {
                     _log?.Send($"   ⚠️ Ошибка проверки статуса: {ex.Message}");
                 }
 
                 attempts++;
-                await Task.Delay(5000);
+                await z3nSafe.SwapExecution.Delay(5000);
             }
 
             if (status != null)

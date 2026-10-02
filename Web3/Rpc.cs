@@ -68,11 +68,11 @@ using System.Collections.Generic;
             
             
             {RpcUrl.Avalanche, "https://avalanche-c-chain.publicnode.com"},
-            {RpcUrl.Bsc, "https://bsc-rpc.publicnode.com"},
+            {RpcUrl.Bsc, "https://bsc-dataseed.bnbchain.org"},
             {RpcUrl.Gravity, "https://rpc.gravity.xyz"},
             {RpcUrl.Gnosis, "https://rpc.gnosischain.com"},
             {RpcUrl.Opbnb, "https://opbnb-mainnet-rpc.bnbchain.org"},
-            {RpcUrl.Polygon, "https://polygon-rpc.com"},
+            {RpcUrl.Polygon, "https://polygon-bor-rpc.publicnode.com"},
             {RpcUrl.Mantle, "https://rpc.mantle.xyz"},
             
             
@@ -89,6 +89,7 @@ using System.Collections.Generic;
 
         public static int ChainId(string name)
         {
+            name = Normalize(name);
             if (Enum.TryParse<RpcUrl>(name, true, out var network))
                 return (int)network; // Приводим enum к int
     
@@ -105,6 +106,7 @@ using System.Collections.Generic;
 
         public static string Get(string name)
         {
+            name = Normalize(name);
             if (Enum.TryParse<RpcUrl>(name, true, out var network))
                 return _rpcs[network];
             
@@ -117,6 +119,13 @@ using System.Collections.Generic;
             
             throw new ArgumentException($"No RpcUrl provided for '{name}'");
         }
+
+        public static string Normalize(string name) => name.Trim().ToLowerInvariant() switch
+        {
+            "eth" => "ethereum", "arb" => "arbitrum", "era" or "zksync-era" => "zksync", "scrl" => "scroll",
+            "op" => "optimism", "avax" => "avalanche", "matic" => "polygon", "xdai" => "gnosis",
+            "binance-smart-chain" => "bsc", _ => name.Trim()
+        };
 
         // Удобные статические свойства
         public static string Ethereum => _rpcs[RpcUrl.Ethereum];

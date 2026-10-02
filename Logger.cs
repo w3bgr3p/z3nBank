@@ -23,6 +23,7 @@ namespace z3n
     
     public class Logger
     {
+        public static string? LocalServerUrl { get; set; }
         private readonly bool _fAcc, _fPort, _fTime, _fMem, _fCaller, _fWrap, _fForce;
         private bool _logShow = false;
         private string _emoji = null;
@@ -41,7 +42,7 @@ namespace z3n
             _persistent = persistent;
             _stopwatch = persistent ? Stopwatch.StartNew() : null;
             _http = http;
-            _logHost =  "http://localhost:5000/api/treasury/log";
+            _logHost = logHost;
             _timezone = timezoneOffset;
             _acc = acc.ToString();
             
@@ -122,7 +123,8 @@ namespace z3n
                     using (var cts = new System.Threading.CancellationTokenSource(1000))
                     using (var content = new StringContent(json, Encoding.UTF8, "application/json"))
                     {
-                        await _httpClient.PostAsync(_logHost, content, cts.Token);
+                        var endpoint = _logHost ?? (LocalServerUrl == null ? null : LocalServerUrl + "/api/treasury/log");
+                        if (endpoint != null) await _httpClient.PostAsync(endpoint, content, cts.Token);
                     }
                 }
                 catch { }

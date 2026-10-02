@@ -1,6 +1,6 @@
 [Setup]
 AppName=z3nBank
-AppVersion=1.0
+AppVersion=1.0.0
 ; По умолчанию предлагаем локальную папку, но даем ВЫБОР
 DefaultDirName={localappdata}\z3nBank
 DefaultGroupName=z3nBank
@@ -15,7 +15,7 @@ DisableProgramGroupPage=no
 AlwaysShowDirOnReadyPage=yes
 
 OutputDir=installer_output
-OutputBaseFilename=z3nBank_Setup
+OutputBaseFilename=z3nBank_Setup_1.0.0
 Compression=lzma2
 SolidCompression=yes
 SetupIconFile=icon.ico

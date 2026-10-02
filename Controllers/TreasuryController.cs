@@ -56,6 +56,7 @@ public partial class TreasuryController : ControllerBase
         public string Protocol { get; set; } = "LiFi"; // LiFi или Relay
         public decimal Threshold { get; set; } = 0.01m;
         public bool ExcludeStables { get; set; }
+        public decimal GasBoostPercent { get; set; } = GasPricing.DefaultPercent;
     }
     public class ImportWalletsRequest
     {
@@ -70,6 +71,18 @@ public partial class TreasuryController : ControllerBase
     private static string _pin = "";
     private static Protocol _protocol = Protocol.LiFi;
     private static Logger _log = new  Logger(true);
+    private static readonly object UpdateLock = new();
+    private static bool _updating;
+    private static TasksDb.UpdateResult? _updateProgress;
+    private static string? _updateError;
+    private static DateTimeOffset? _updateFinishedAt;
+
+    [HttpGet("update-status")]
+    public IActionResult GetUpdateStatus()
+    {
+        lock (UpdateLock)
+            return Ok(new { running = _updating, progress = _updateProgress, error = _updateError, finishedAt = _updateFinishedAt });
+    }
     
     #endregion
     
@@ -106,9 +119,13 @@ public partial class TreasuryController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { error = ex.Message, success = false });
+            var error = DatabaseErrors.Describe(ex);
+            return BadRequest(new { error = error.Message, code = error.Code, success = false });
         }
     }
+
+    [HttpGet("keyboard-status")]
+    public IActionResult KeyboardStatus() => Ok(new { capsLock = System.Windows.Forms.Control.IsKeyLocked(System.Windows.Forms.Keys.CapsLock) });
 
     [HttpGet("data")]
     public IActionResult GetTreasuryData([FromQuery] int maxId = 1000, [FromQuery] string chains = null)
@@ -240,6 +257,7 @@ public partial class TreasuryController : ControllerBase
                     try
                     {
                         var tokens = JsonConvert.DeserializeObject<List<HeatmapGenerator.TokenInfo>>(chainJson);
+                        tokens = tokens?.Where(t => t.ChainId > 0 && t.ValueUSD > 0).ToList();
                         if (tokens != null && tokens.Count > 0)
                         {
                             var tokenDtos = tokens.Select(t => new TokenDto
@@ -282,6 +300,7 @@ public partial class TreasuryController : ControllerBase
     [HttpPost("update")]
     public async Task<IActionResult> UpdateBalances([FromQuery] int maxId = 100, [FromQuery] decimal minValue = 0.001m)
     {        
+        if (maxId < 1 || minValue < 0) return BadRequest(new { error = "maxId must be positive and minValue non-negative" });
         var dbCheck = CheckDbConnection(); 
         if (dbCheck != null) return dbCheck;
 
@@ -290,20 +309,41 @@ public partial class TreasuryController : ControllerBase
         try
         {
             var db = _dbService.GetDb();
+            lock (UpdateLock)
+            {
+                if (_updating) return Conflict(new { error = "A balance update is already running" });
+                _updating = true;
+                _updateProgress = new TasksDb.UpdateResult(0, 0, 0, 0, 0);
+                _updateError = null;
+                _updateFinishedAt = null;
+            }
             // Run update in background
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await TasksDb.UpdateDb(db, maxId, minValue);
+                    var result = await TasksDb.UpdateDb(db, maxId, minValue, progress: value =>
+                    {
+                        lock (UpdateLock) _updateProgress = value;
+                    });
+                    lock (UpdateLock) _updateProgress = result;
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Background update error: {ex.Message}");
+                    lock (UpdateLock) _updateError = ex.Message;
+                }
+                finally
+                {
+                    lock (UpdateLock)
+                    {
+                        _updating = false;
+                        _updateFinishedAt = DateTimeOffset.UtcNow;
+                    }
                 }
             });
 
-            return Ok(new { message = "Update started", maxId, minValue });
+            return Accepted(new { message = "Update started", maxId, minValue });
         }
         catch (Exception ex)
         {
@@ -363,6 +403,7 @@ public partial class TreasuryController : ControllerBase
     [HttpPost("swap-chains")]
     public async Task<IActionResult> ChainsToNative([FromBody] ExecuteRequest request)
     {
+        if (!GasPricing.IsValid(request.GasBoostPercent)) return BadRequest(new { error = "Gas +% must be between 0 and 1000, with at most two decimal places" });
         var dbCheck = CheckDbConnection(); 
         if (dbCheck != null) return dbCheck;
         try
@@ -373,12 +414,18 @@ public partial class TreasuryController : ControllerBase
             Console.WriteLine($"🚀 Starting swap-chains for account {request.Id}");
             Console.WriteLine($"   Chains: {string.Join(", ", request.Chains)}");
             Console.WriteLine($"   Threshold: {request.Threshold}, ExcludeStables: {request.ExcludeStables}");
+            (Guid Id, CancellationTokenSource Cancellation) operation;
+            lock (TokenSwapLock)
+            {
+                if (_defiExitRunning) return Conflict(new { error = "Wait for the DeFi withdrawal to finish" });
+                operation = RegisterSwap();
+            }
         
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await DeFi.SwapAllTokensNative(
+                    await SwapExecution.Run(operation.Cancellation.Token, async () => await DeFi.SwapAllTokensNative(
                         db, 
                         request.Id, 
                         request.Threshold, 
@@ -387,13 +434,19 @@ public partial class TreasuryController : ControllerBase
                         clientType: protocol, 
                         chains: string.Join(",", request.Chains),
                         log:_log
-                    );
+                    ), request.GasBoostPercent);
                     Console.WriteLine($"✅ Completed swap for account {request.Id}");
+                }
+                catch (OperationCanceledException)
+                {
+                    _log.Send($"Swap stopped for account #{request.Id}. Broadcast transactions must be checked on-chain.", "WARNING");
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"❌ Background swap error for {request.Id}: {ex.Message}");
+                    _log.Send($"Swap stopped for account #{request.Id}: {SwapExecution.ErrorDetails(ex)}", "ERROR");
                 }
+                finally { FinishSwap(operation.Id); }
             });
             
             return NoContent();
@@ -408,6 +461,7 @@ public partial class TreasuryController : ControllerBase
     [HttpPost("bridge-chains")]
     public async Task<IActionResult> NativeToOneChain([FromBody] ExecuteRequest request)
     {
+        if (!GasPricing.IsValid(request.GasBoostPercent)) return BadRequest(new { error = "Invalid gas boost percentage" });
         var dbCheck = CheckDbConnection(); 
         if (dbCheck != null) return dbCheck;
         try
@@ -423,12 +477,17 @@ public partial class TreasuryController : ControllerBase
             Console.WriteLine($"🚀 Starting bridge for account {request.Id} to {request.Destination}");
             Console.WriteLine($"   Chains: {string.Join(", ", request.Chains)}");
             Console.WriteLine($"   Bridge: {request.Protocol}, Threshold: {request.Threshold}");
+            lock (TokenSwapLock)
+            {
+                if (_defiExitRunning) return Conflict(new { error = "Wait for the DeFi withdrawal to finish" });
+                _defiBlockingBridges++;
+            }
         
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await DeFi.BridgeAllNative(
+                    await SwapExecution.Run(CancellationToken.None, async () => await DeFi.BridgeAllNative(
                         db, 
                         request.Id, 
                         request.Threshold, 
@@ -436,13 +495,14 @@ public partial class TreasuryController : ControllerBase
                         pin, 
                         clientType: protocol, 
                         chains: string.Join(",", request.Chains)
-                    );
+                    ), request.GasBoostPercent);
                     Console.WriteLine($"✅ Completed bridge for account {request.Id} to {request.Destination}");
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"❌ Background bridge error for {request.Id}: {ex.Message}");
                 }
+                finally { lock (TokenSwapLock) _defiBlockingBridges--; }
             });
         
             return NoContent();

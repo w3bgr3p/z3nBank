@@ -6,6 +6,21 @@ let autoRefreshInterval = null;
 let selectedChain = '';
 let dbConfigured = false;
 
+async function submitDbConfig(config) {
+    try {
+        const response = await fetch(`${API_BASE}/db-config`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config)
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error || 'Не удалось подключиться к БД.');
+        dbConfigured = true;
+        return config;
+    } catch (error) {
+        Swal.showValidationMessage(error.message);
+        return false;
+    }
+}
+
 
 
 async function checkDbAndInit() {
@@ -95,7 +110,8 @@ async function showDbConfigDialog() {
             });
         },
 
-        preConfirm: () => {
+        showLoaderOnConfirm: true,
+        preConfirm: async () => {
             const dbType = document.getElementById('swal-db-type').value;
             if (!dbType) {
                 Swal.showValidationMessage('Select database type');
@@ -103,37 +119,26 @@ async function showDbConfigDialog() {
             }
 
             if (dbType === 'sqlite') {
-                return {
+                return await submitDbConfig({
                     type: 'sqlite',
                     sqlitePath: document.getElementById('swal-sqlite-path').value
-                };
+                });
             } else {
-                return {
+                return await submitDbConfig({
                     type: 'postgres',
                     host: document.getElementById('swal-host').value,
                     port: document.getElementById('swal-port').value,
                     database: document.getElementById('swal-db').value,
                     user: document.getElementById('swal-user').value,
                     password: document.getElementById('swal-pass').value
-                };
+                });
             }
         }
     });
 
-    if (!formValues) return await showDbConfigDialog();
+    if (!formValues) return;
 
     try {
-        const response = await fetch(`${API_BASE}/db-config`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(formValues)
-        });
-
-        const result = await response.json();
-        if (!response.ok || !result.success) {
-            throw new Error(result.error || 'Connection failed');
-        }
-
         dbConfigured = true;
         Swal.fire({
             icon: 'success',
@@ -153,7 +158,6 @@ async function showDbConfigDialog() {
             background: '#161b22',
             color: '#c9d1d9'
         });
-        return await showDbConfigDialog();
     }
 }
 
@@ -187,7 +191,8 @@ async function refreshData() {
 
     try {
         console.log('Fetching data from:', `${API_BASE}/data?maxId=${maxId}`);
-        const response = await fetch(`${API_BASE}/data?maxId=${maxId}`);
+        const chains = encodeURIComponent(getSelectedChains().join(','));
+        const response = await fetch(`${API_BASE}/data?maxId=${maxId}&chains=${chains}`, { cache: 'no-store' });
 
         console.log('Response status:', response.status);
 
@@ -232,20 +237,12 @@ async function refreshData() {
     }
 }
 
-async function updateStats() {
-    const maxId = document.getElementById('maxIdInput').value;
-
-    try {
-        const response = await fetch(`${API_BASE}/stats?maxId=${maxId}`);
-        const stats = await response.json();
-
-        document.getElementById('totalAccounts').textContent = stats.totalAccounts;
-        document.getElementById('activeAccounts').textContent = stats.activeAccounts;
-        document.getElementById('totalChains').textContent = stats.totalChains;
-        document.getElementById('totalValue').textContent = formatUSD(stats.totalValue);
-    } catch (error) {
-        console.error('Failed to update stats:', error);
-    }
+async function updateStats(data = treasuryData) {
+    // Statistics and cells must use the same snapshot, including chain filters.
+    document.getElementById('totalAccounts').textContent = data.length;
+    document.getElementById('activeAccounts').textContent = data.filter(a => Object.keys(a.chainData || {}).length > 0).length;
+    document.getElementById('totalChains').textContent = getAllChains(data).length;
+    document.getElementById('totalValue').textContent = formatUSD(calculateTotalValue(data));
 }
 
 async function updateChainFilter() {
@@ -253,13 +250,12 @@ async function updateChainFilter() {
         const response = await fetch(`${API_BASE}/chains?_t=${Date.now()}`);
         const chains = await response.json();
 
-        const filter = document.getElementById('chainFilter');
-        const currentValue = filter.value;
-
-        filter.innerHTML = '<option value="">All Chains</option>' +
-            chains.map(chain => `<option value="${chain}">${chain}</option>`).join('');
-
-        filter.value = currentValue;
+        if (!response.ok) throw new Error(`Chains returned ${response.status}`);
+        const selected = getSelectedChains();
+        const destination = document.getElementById('destinationChainSelect').value;
+        updateChainCheckboxes(chains);
+        document.querySelectorAll('.chain-checkbox').forEach(cb => { cb.checked = selected.includes(cb.value); });
+        if (chains.includes(destination)) document.getElementById('destinationChainSelect').value = destination;
     } catch (error) {
         console.error('Failed to update chain filter:', error);
     }
@@ -336,6 +332,7 @@ function getValueLevel(value, maxValue) {
 function getSettings() {
     return {
         protocol: document.getElementById('protocolSelect').value,
+        gasBoostPercent: getGasBoostPercent(),
         threshold: parseFloat(document.getElementById('thresholdInput').value) || 0.1,
         excludeStables: document.getElementById('excludeStablesCheckbox').checked
     };
@@ -375,6 +372,7 @@ async function swapAllToNative(accountId) {
                 id: accountId,
                 chains: selectedChains,
                 protocol: settings.protocol,
+                gasBoostPercent: settings.gasBoostPercent,
                 destination: null,
                 threshold: settings.threshold,
                 excludeStables: settings.excludeStables
@@ -456,6 +454,7 @@ async function bridgeToChain(accountId) {
                 chains: selectedChains,
                 destination: destination,
                 protocol: settings.protocol,
+                gasBoostPercent: settings.gasBoostPercent,
                 threshold: settings.threshold,
                 excludeStables: settings.excludeStables
             })
@@ -492,6 +491,7 @@ async function bridgeToChain(accountId) {
 }
 
 function renderHeatmap(data) {
+    updateTokenChoices(data);
     const chains = getAllChains(data);
     const filteredChains = selectedChain ? [selectedChain] : chains;
 
@@ -513,13 +513,10 @@ function renderHeatmap(data) {
     html += '<th class="address-col">Address</th>';
 
     filteredChains.forEach(chain => {
-        const iconUrl = `https://raw.githubusercontent.com/lifinance/types/refs/heads/main/src/assets/icons/chains/${chain.toLowerCase()}.svg`;
-        html += `<th title="${chain}">
-        <img src="${iconUrl}" 
-             alt="${chain}" 
-             class="chain-icon"
-             onerror="this.style.display='none'; this.parentElement.textContent='${chain.substring(0, 3)}';">
-    </th>`;
+        const labels = { Ethereum: 'ETH', Arbitrum: 'ARB', Base: 'BASE', 'OP Mainnet': 'OP',
+            Polygon: 'POL', Avalanche: 'AVAX', Gnosis: 'GNO', HyperEVM: 'HYPE',
+            Unichain: 'UNI', Mantle: 'MNT', zkSync: 'ZK', Linea: 'LINEA', Scroll: 'SCR' };
+        html += `<th title="${chain}"><span class="chain-label">${labels[chain] || chain.slice(0, 4).toUpperCase()}</span></th>`;
     });
 
     html += '<th style="background: #1c2128; border-left: 2px solid #30363d;">TOTAL</th>';
@@ -529,7 +526,8 @@ function renderHeatmap(data) {
 
     data.forEach(account => {
         html += '<tr>';
-        html += `<td class="id-cell">${account.id}</td>`;
+        html += `<td class="id-cell"><button type="button" class="account-id-button treasury-account-id" data-account-id="${account.id}"
+            aria-pressed="false" aria-label="Select account ${account.id}" onclick="toggleTreasuryAccount(${account.id})">${account.id}</button></td>`;
         html += `<td class="address-cell" title="${account.address}">
             <a href="https://debank.com/profile/${account.address}" target="_blank" class="address-link">
                 ${account.address}
@@ -591,6 +589,7 @@ function renderHeatmap(data) {
 
     document.getElementById('tableContainer').innerHTML = html;
     attachTooltipListeners();
+    highlightSelectedToken();
     updateSidebar(data);
 }
 
@@ -708,6 +707,7 @@ async function updateBalances() {
             method: 'POST'
         });
         const result = await response.json();
+        if (!response.ok) throw new Error(result.error || `API returned ${response.status}`);
         Swal.fire({
             icon: 'success',
             title: '✅ Balance Update',
@@ -717,17 +717,48 @@ async function updateBalances() {
             timer: 3000
         });
 
-        // Refresh after a delay
-        setTimeout(refreshData, 3000);
+        await monitorBalanceUpdate();
     } catch (error) {
         console.error('Failed to update balances:', error);
         Swal.fire({
             icon: 'error',
             title: '❌ Update Failed',
-            text: 'Failed to start balance update',
+            text: error.message,
             background: '#161b22',
             color: '#c9d1d9'
         });
+    }
+}
+
+async function monitorBalanceUpdate() {
+    const button = document.getElementById('updateBalancesButton');
+    const label = document.getElementById('balanceUpdateStatus');
+    button.disabled = true;
+    try {
+        while (true) {
+            const response = await fetch(`${API_BASE}/update-status`, { cache: 'no-store' });
+            if (!response.ok) throw new Error(`Update status returned ${response.status}`);
+            const status = await response.json();
+            const progress = status.progress || { updated: 0, failed: 0, processed: 0 };
+            label.textContent = `${status.running ? 'Updating' : 'Finished'}: ${progress.processed} checked, ${progress.updated} updated, ${progress.failed} failed`;
+            if (!status.running) {
+                await refreshData();
+                if (status.error || progress.failed > 0) {
+                    await Swal.fire({
+                        icon: 'warning', title: 'Balance update incomplete',
+                        text: status.error || `${progress.failed} wallets failed. Their previous balances were kept; see logs.`,
+                        background: '#161b22', color: '#c9d1d9'
+                    });
+                }
+                break;
+            }
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+    } catch (error) {
+        label.textContent = 'Update status unavailable; check logs';
+        throw error;
+    } finally {
+        button.disabled = false;
     }
 }
 
@@ -754,7 +785,8 @@ function updateTopTokens(data) {
     data.forEach(account => {
         Object.values(account.chainData || {}).forEach(tokens => {
             tokens.forEach(token => {
-                const key = token.symbol;
+                const key = tokenSymbol(token);
+                if (!key) return;
                 if (!tokenAggregation[key]) {
                     tokenAggregation[key] = {
                         symbol: key,
@@ -771,29 +803,25 @@ function updateTopTokens(data) {
 
     // Сортируем по стоимости
     const sortedTokens = Object.values(tokenAggregation)
-        .sort((a, b) => b.totalValue - a.totalValue)
-        .slice(0, 15); // Top 15
+        .sort((a, b) => b.totalValue - a.totalValue);
 
-    const html = sortedTokens.map(token => {
-        const percent = ((token.totalValue / totalValue) * 100).toFixed(1);
-        return `
-            <div class="token-row">
-                <div class="token-info">
-                    <span class="token-symbol">${token.symbol}</span>
-                    <span class="token-accounts">${token.accounts.size} accounts</span>
-                </div>
-                <div class="token-value">
-                    <span class="token-usd">${formatUSD(token.totalValue)}</span>
-                    <span class="token-percent">${percent}%</span>
-                </div>
-            </div>
-            <div class="progress-bar">
-                <div class="progress-fill" style="width: ${percent}%"></div>
-            </div>
-        `;
-    }).join('');
-
-    document.getElementById('topTokens').innerHTML = html;
+    const list = document.getElementById('topTokens'); list.replaceChildren();
+    for (const token of sortedTokens) {
+        const percent = totalValue > 0 ? ((token.totalValue / totalValue) * 100).toFixed(1) : '0.0';
+        const choice = document.createElement('button'); choice.type = 'button'; choice.className = 'token-choice';
+        choice.dataset.symbol = token.symbol; choice.onclick = () => selectTreasuryToken(token.symbol);
+        const make = (tag, className, text) => {
+            const node = document.createElement(tag); node.className = className;
+            if (text !== undefined) node.textContent = text; return node;
+        };
+        const row = make('div', 'token-row'), info = make('div', 'token-info'), value = make('div', 'token-value');
+        info.append(make('span', 'token-symbol', token.symbol), make('span', 'token-accounts', `${token.accounts.size} accounts`));
+        value.append(make('span', 'token-usd', formatUSD(token.totalValue)), make('span', 'token-percent', `${percent}%`));
+        row.append(info, value);
+        const bar = make('div', 'progress-bar'), fill = make('div', 'progress-fill'); fill.style.width = `${percent}%`;
+        bar.append(fill); choice.append(row, bar); list.append(choice);
+    }
+    highlightSelectedToken();
 }
 
 function updateChainStats(data) {
@@ -1056,7 +1084,8 @@ async function setDb() {
             });
         },
 
-        preConfirm: () => {
+        showLoaderOnConfirm: true,
+        preConfirm: async () => {
             const dbType = document.getElementById('swal-db-type').value;
 
             if (!dbType) {
@@ -1070,13 +1099,13 @@ async function setDb() {
                     Swal.showValidationMessage('⚠️ Path is required');
                     return false;
                 }
-                return { type: 'sqlite', path };
+                return await submitDbConfig({ type: 'sqlite', sqlitePath: path });
 
             } else if (dbType === 'postgres') {
                 const config = {
                     type: 'postgres',
                     host: document.getElementById('swal-host').value,
-                    port: document.getElementById('swal-port').value || 5432,
+                    port: String(document.getElementById('swal-port').value || '5432'),
                     database: document.getElementById('swal-db').value,
                     user: document.getElementById('swal-user').value,
                     password: document.getElementById('swal-pass').value
@@ -1087,7 +1116,7 @@ async function setDb() {
                     return false;
                 }
 
-                return config;
+                return await submitDbConfig(config);
             }
         }
     });
@@ -1096,14 +1125,6 @@ async function setDb() {
 
     // Отправка на сервер
     try {
-        const response = await fetch(`${API_BASE}/db-config`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(formValues)
-        });
-
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
         Swal.fire({
             icon: 'success',
             title: '✅ Saved!',

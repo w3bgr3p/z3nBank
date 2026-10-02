@@ -19,70 +19,58 @@ public class TasksDb
         public string PriceUSD { get; set; }
         public int ChainId { get; set; }
         public string Address { get; set; }
-        public decimal ValueUSD { get; set; }
+        public decimal ValueUSD => BalanceMath.GetValueUsd(Amount, Decimals, PriceUSD);
     }
     
     
-    public static async Task UpdateDb(Db dbConnection, int dbRange = 1000, decimal minValue = 0.001m, Logger log = null)
+    public sealed record UpdateResult(int Processed, int Updated, int Failed, int Skipped, int CurrentId);
+
+    public static async Task<UpdateResult> UpdateDb(Db dbConnection, int dbRange = 1000,
+        decimal minValue = 0.001m, Logger? log = null, Action<UpdateResult>? progress = null, Jumper? client = null)
     {
-        var id = 0;
+        if (dbRange < 1 || minValue < 0) throw new ArgumentOutOfRangeException(nameof(dbRange));
         var db = dbConnection;
-        log = log ?? new Logger(true);
-        var jumper = new Jumper(log);
+        log ??= new Logger(true);
+        using var ownedClient = client == null ? new Jumper(log) : null;
+        var jumper = client ?? ownedClient!;
         var chainNames = await jumper.GetChainMapping();
-
-        while (id <= dbRange)
+        var updated = 0;
+        var failed = 0;
+        var skipped = 0;
+        for (var id = 1; id <= dbRange; id++)
         {
-            id++;
             log._acc = id.ToString();
-            await Task.Delay(108);
-
-            var address = db.Get("evm", "_addresses", where: $"id = {id}");
-            var bal = await jumper.GetBalances(address);
-
-            if (bal?.Balances == null)
+            try
             {
-                Console.WriteLine($"--- {id}: {address} | NO DATA ---");
-                continue;
-            }
-
-            bool hasAnyTokens = false;
-
-            foreach (var chain in bal.Balances)
-            {
-                if (!int.TryParse(chain.Key, out int chainIdInt))
+                var address = db.Get("evm", "_addresses", where: $"id = {id}", log: true)?.Trim();
+                if (string.IsNullOrEmpty(address))
                 {
+                    skipped++;
                     continue;
                 }
-
-                string chainName = chainNames.ContainsKey(chainIdInt)
-                    ? chainNames[chainIdInt]
-                    : $"Unknown_{chain.Key}";
-
-                var tokensInChain = chain.Value
-                    .Where(t => t.ValueUSD > minValue)
-                    .ToList();
-
-                if (tokensInChain.Any())
+                var bal = await jumper.GetBalances(address);
+                var snapshot = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (var chain in bal.Balances)
                 {
-                    hasAnyTokens = true;
-                    string accountChainJson = JsonConvert.SerializeObject(tokensInChain, Formatting.Indented);
-
-                    Console.WriteLine($"--- {id}: {address} | Chain: {chainName} ---");
-                    Console.WriteLine(accountChainJson);
-
-                    db.AddColumn($"{chainName}", "_treasury");
-                    db.Upd($"{chainName} = '{accountChainJson}'", "_treasury", where: $"id = {id}");
-
-                    log?.Send(accountChainJson, $"{id}_{address.Substring(address.Length - 4)}_{chainName}");
+                    if (!int.TryParse(chain.Key, out var chainId) || !chainNames.TryGetValue(chainId, out var chainName))
+                        throw new InvalidDataException($"No EVM metadata for returned chain {chain.Key}; keeping previous snapshot.");
+                    var tokens = chain.Value.Where(t => t.ValueUSD > minValue)
+                        .GroupBy(t => t.Address, StringComparer.OrdinalIgnoreCase).Select(g => g.First()).ToList();
+                    snapshot[chainName] = JsonConvert.SerializeObject(tokens);
                 }
+                db.ReplaceTreasurySnapshot(id, snapshot);
+                updated++;
+                log.Send($"Balance snapshot saved: {snapshot.Count} chains", "INFO");
+                await Task.Delay(250);
             }
-
-            if (!hasAnyTokens)
+            catch (Exception ex)
             {
-                Console.WriteLine($"--- {id}: {address} | EMPTY (all < {minValue} USD) ---");
+                failed++;
+                log.Send($"Balance update failed; previous data kept: {ex.Message}", "ERROR");
             }
+            finally { progress?.Invoke(new UpdateResult(id, updated, failed, skipped, id)); }
         }
+        return new UpdateResult(dbRange, updated, failed, skipped, dbRange);
     }
     
     public async Task<List<AccountData>> GetTreasuryData(Db _db, int maxId = 1000, List<string> selectedChains = null)
@@ -109,6 +97,7 @@ public class TasksDb
                 {
                     try {
                         var tokens = JsonConvert.DeserializeObject<List<TokenInfo>>(chainJson);
+                        tokens = tokens?.Where(t => t.ChainId > 0 && t.ValueUSD > 0).ToList();
                         if (tokens != null && tokens.Count > 0)
                             accountData.ChainData[chainName] = tokens;
                     } catch { /* log error */ }

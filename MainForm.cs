@@ -8,6 +8,7 @@ public class MainForm : Form
 {
     private WebView2 webView;
     private IHost? host;
+    private string serverUrl = "";
 
     public MainForm()
     {
@@ -56,7 +57,7 @@ public class MainForm : Form
     
         SetFormIcon();
     
-        webView.Source = new Uri("http://127.0.0.1:5000");
+        webView.Source = new Uri(serverUrl);
     }
 
     private void SetFormIcon()
@@ -116,7 +117,7 @@ public class MainForm : Form
         builder.Services.AddSingleton<DbConnectionService>();
         builder.Services.AddSingleton<LogService>();
 
-        builder.WebHost.UseUrls("http://127.0.0.1:5000");
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
 
         var app = builder.Build();
         
@@ -156,7 +157,9 @@ public class MainForm : Form
         host = app;
         await host.StartAsync();
         
-        Console.WriteLine("Server started on http://127.0.0.1:5000");
+        serverUrl = app.Urls.Single();
+        z3n.Logger.LocalServerUrl = serverUrl;
+        Console.WriteLine($"Server started on {serverUrl}");
     }
 
     private void MainForm_FormClosing(object? sender, FormClosingEventArgs e)

@@ -1,0 +1,199 @@
+/* z3nDash Treasury visual system; existing dashboard IDs and actions retained. */
+body { background: var(--bg); color: var(--text); font-family: var(--mono); font-size: var(--fs-11); }
+button, input, select { font-family: inherit; }
+.header { background: var(--bg1); border-color: var(--border); padding: var(--sp-8) var(--sp-14); gap: var(--sp-12); flex-wrap: wrap; }
+.header h1 { color: var(--accent); font-size: var(--fs-13); white-space: nowrap; }
+.page-name { color: var(--text2); font-weight: 400; margin-left: var(--sp-8); padding-left: var(--sp-12); border-left: 1px solid var(--border); }
+.stats-bar { margin-right: auto; gap: var(--sp-14); font-size: var(--fs-10); }
+.stat-item { white-space: nowrap; }
+.stat-label { color: var(--text2); letter-spacing: .4px; }
+.stat-value { color: var(--accent); }
+#totalValue { color: var(--gold); font-variant-numeric: tabular-nums; }
+.header-right { display: flex; align-items: center; gap: var(--sp-4); margin-left: auto; }
+.header-right button, .controls button, .logs-controls button {
+    padding: var(--sp-4) var(--sp-8); background: var(--bg2); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--fs-10);
+    font-weight: var(--fw-medium); cursor: pointer; transition: background .15s, border-color .15s;
+}
+.header-right button:hover, .controls button:hover, .logs-controls button:hover { background: var(--bg3); border-color: var(--text2); }
+.controls { padding: var(--sp-6) var(--sp-14); gap: var(--sp-6); flex-wrap: wrap; background: var(--bg1); border-color: var(--border); }
+.controls label { color: var(--text2) !important; font-size: var(--fs-10); white-space: nowrap; }
+.toolbar-sep { width: 1px; height: 16px; background: var(--border); margin: 0 var(--sp-4); }
+.header-right select, .controls input:not([type=checkbox]), .controls select, .logs-controls select, .logs-controls input {
+    background: var(--bg) !important; color: var(--text) !important; border: 1px solid var(--border) !important;
+    border-radius: var(--radius-sm) !important; padding: var(--sp-4) var(--sp-6) !important; font-size: var(--fs-10) !important;
+}
+.controls button.primary { background: var(--accent-dim); color: var(--accent); border-color: var(--blue-border); }
+.controls button.primary:hover { background: color-mix(in srgb, var(--accent) 18%, var(--bg)); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button:focus-visible, input:focus-visible, select:focus-visible, .select-box:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type=checkbox] { accent-color: var(--accent); }
+#balanceUpdateStatus { color: var(--text2) !important; font-size: var(--fs-9); }
+#balanceUpdateStatus:empty { display: none; }
+.main-content { padding: 0; gap: 0; min-height: 0; }
+.left-section { flex: 1; min-width: 0; gap: 0; }
+.table-wrapper { background: var(--bg); border: 0; border-radius: 0; min-height: 120px; }
+.table-container { padding: var(--sp-6) var(--sp-8); }
+table { font-family: var(--mono); font-size: var(--fs-9); min-width: 100%; }
+th, td { border-color: var(--border); }
+th { padding: var(--sp-4) var(--sp-6); background: var(--bg1) !important; color: var(--text2); font-size: var(--fs-8); }
+th.id-col { width: 35px; background: var(--bg1); }
+th.address-col { background: var(--bg1); }
+.chain-label { color: var(--text2); font-size: var(--fs-9); letter-spacing: 0; }
+.token-list { display: block; }
+td.id-cell, td.address-cell { background: var(--bg); border-color: var(--border); padding: var(--sp-4) var(--sp-6); }
+td.id-cell { color: var(--accent); width: 35px; }
+td.address-cell { color: var(--text); font-family: var(--mono); font-size: var(--fs-9); }
+td[style] { background: var(--bg) !important; border-color: var(--border) !important; }
+.address-link { color: var(--text); }
+.address-link:hover { color: var(--accent); }
+tbody tr:hover td { background: var(--bg1) !important; }
+.chain-icon { width: 14px; height: 14px; }
+.cell-wrapper { padding: var(--sp-2); }
+.heatmap-cell { width: auto; min-width: 40px; height: 22px; padding: 2px 6px; border-radius: 0; }
+.heatmap-cell.empty { background: var(--bg2); opacity: .5; border: none; }
+.heatmap-cell:hover { transform: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent); }
+.cell-value { font-family: var(--mono); font-size: 11px; font-weight: 600; color: #fff; text-shadow: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.swap-btn, .bridge-btn { background: var(--bg2); color: var(--text2); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: none; width: 22px; height: 22px; }
+.swap-btn:hover:not(:disabled) { color: var(--green); border-color: var(--green); background: var(--green-dim); box-shadow: none; }
+.bridge-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); box-shadow: none; }
+.sidebar { width: 250px; min-width: 220px; max-width: 300px; flex: 0 0 250px; background: var(--bg1); border: 0; border-left: 1px solid var(--border); border-radius: 0; padding: 0; }
+.sidebar-section { padding: var(--sp-12) var(--sp-14); border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; margin: 0; }
+.sidebar-section h3 { color: var(--text2); font-size: var(--fs-9); letter-spacing: .8px; margin-bottom: var(--sp-8); }
+.token-row { background: transparent; border: 0; border-radius: 0; padding: var(--sp-4) 0; }
+.token-row:hover { background: transparent; }
+.token-info { gap: var(--sp-2); }
+.token-symbol { color: var(--text); font-size: var(--fs-10); }
+.token-value { color: var(--gold); }
+.token-usd { color: var(--text-hi); font-size: var(--fs-10); font-variant-numeric: tabular-nums; }
+.token-accounts, .token-percent { color: var(--text2); font-size: var(--fs-8); }
+.progress-bar { background: var(--bg2); height: 2px; margin: var(--sp-2) 0 var(--sp-6); border-radius: 1px; }
+.progress-fill { background: var(--accent); border-radius: 1px; }
+.chain-stat-row { padding: var(--sp-4) 0; border-color: var(--border); }
+.chain-stat-name { color: var(--text); }
+.chain-stat-value { color: var(--text-hi); font-variant-numeric: tabular-nums; }
+#portfolioSummary { color: var(--text2) !important; }
+#portfolioSummary span[style] { color: var(--text) !important; }
+.logs-panel { position: fixed; bottom: 0; left: 0; right: 0; z-index: 200; width: 100%; height: min(55vh, 600px); min-width: 0; max-width: none; margin: 0; background: var(--bg); border: 0; border-top: 1px solid var(--border); border-radius: 0; min-height: 0; box-shadow: 0 -8px 24px #0006; }
+.logs-panel[hidden] { display: none; }
+.logs-header { background: var(--bg1); border-color: var(--border); padding: var(--sp-4) var(--sp-10); gap: var(--sp-8); }
+.logs-title { background: transparent; border: 0; color: var(--text2); font-size: var(--fs-9); font-weight: 600; text-transform: uppercase; letter-spacing: .8px; cursor: pointer; }
+.logs-title span { margin-left: var(--sp-8); color: var(--accent); }
+.logs-controls { margin-left: auto; gap: var(--sp-4); }
+.logs-controls button.danger { background: transparent; color: var(--red); border-color: var(--border); }
+.logs-controls button.danger:hover { background: var(--red-dim); border-color: var(--red); }
+.logs-content { padding: var(--sp-8) var(--sp-10); background: var(--bg); min-height: 0; font-size: 12px; line-height: 1.5; }
+.logs-header { flex-shrink: 0; }
+.logs-content { overflow: auto; }
+.logs-content .message { display: block; flex: 0 0 auto; font-size: 12px; line-height: 1.5; white-space: nowrap; overflow-wrap: normal; overflow: visible; margin: 0; padding: 0; -webkit-line-clamp: unset; }
+.logs-content .message:hover { padding: 0; }
+.log-entry { display: flex; align-items: baseline; gap: 12px; width: max-content; min-width: 100%; padding: 4px 12px; background: transparent; border-color: var(--border); border-radius: 0; }
+.log-header { display: flex; flex: 0 0 auto; align-items: baseline; gap: 8px; white-space: nowrap; }
+.log-entry:hover { background: var(--bg1); }
+.log-entry.ERROR { background: var(--red-dim); border-color: var(--red); }
+.log-entry.ERROR:hover { background: var(--red-dim); }
+.log-entry.WARNING { background: var(--yellow-dim); border-color: var(--yellow); }
+.message { color: var(--text); background: transparent; font-family: var(--mono); }
+.message:hover { background: var(--bg2); }
+.timestamp, .session, .port, .pid { color: var(--text2); }
+.machine, .project, .account { background: var(--bg2); color: var(--text2); border-color: var(--border); }
+.level.INFO { color: var(--accent); background: var(--accent-dim); }
+.level.ERROR { color: var(--red); background: var(--red-dim); }
+.level.WARNING { color: var(--yellow); background: var(--yellow-dim); }
+.level.SUCCESS { color: var(--green); background: var(--green-dim); }
+.legend { padding: var(--sp-4) var(--sp-14); background: var(--bg1); border-color: var(--border); color: var(--text2); gap: var(--sp-8); font-size: var(--fs-8); }
+.legend-box { width: 8px; height: 8px; border-radius: 2px; }
+.tooltip { background: var(--bg1); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 8px 24px #0004; }
+.tooltip-header { color: var(--accent); border-color: var(--border); }
+.tooltip-address, .token-amount { color: var(--text2); font-family: var(--mono); }
+.token-item { background: var(--bg2); border-color: var(--accent); }
+.total-value { color: var(--gold); border-color: var(--border); }
+.select-box { background: var(--bg); color: var(--text); border-color: var(--border); border-radius: var(--radius-sm); padding: var(--sp-4) var(--sp-8); font-size: var(--fs-10); }
+.select-box:hover { border-color: var(--accent); }
+.checkboxes { background: var(--bg1); color: var(--text); border-color: var(--border); border-radius: var(--radius-sm); box-shadow: 0 8px 24px #0004; }
+.checkboxes label { color: var(--text); padding: var(--sp-4) var(--sp-6); }
+.checkboxes label:hover { background: var(--bg2); }
+.loading-overlay { background: color-mix(in srgb, var(--bg) 92%, transparent); color: var(--accent); font-family: var(--mono); }
+.swal2-popup { background: var(--bg1) !important; color: var(--text) !important; font-family: var(--mono) !important; border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.swal2-input, .swal2-select, .swal2-textarea { background: var(--bg) !important; color: var(--text) !important; border-color: var(--border) !important; font-family: var(--mono); }
+.swal2-confirm { background: var(--accent) !important; color: var(--on-accent) !important; box-shadow: none !important; }
+.swal2-cancel { background: var(--bg2) !important; color: var(--text) !important; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text2); }
+@media (max-width: 1050px) { .sidebar { flex-basis: 210px; min-width: 210px; } .header-right { margin-left: 0; } }
+@media (max-width: 720px) { .main-content { flex-direction: column; overflow: auto; } .left-section { flex: 0 0 70vh; } .sidebar { flex: none; width: 100%; max-width: none; border-left: 0; border-top: 1px solid var(--border); } .stats-bar { flex-wrap: wrap; } .header-right { width: 100%; } }
+.token-controls { flex-shrink: 0; }
+.token-controls select { min-width: 150px; }
+.token-match { outline: 2px solid var(--accent); outline-offset: -2px; }
+.heatmap-cell.token-muted { opacity: .22; }
+.token-swap-preview { max-height: 300px; overflow: auto; text-align: left; font-family: monospace; font-size: 11px; overflow-wrap: anywhere; }
+/* DeFi is an on-demand panel; it does not reserve space in the treasury table. */
+.defi-panel { position: fixed; inset: 0; margin: auto; height: fit-content; box-sizing: border-box; overflow: auto; width: min(1400px, 94vw); max-height: 85vh; padding: 16px; color: var(--text); background: var(--bg); border: 1px solid var(--border); font: inherit; }
+.defi-panel::backdrop { background: #0009; }
+.defi-heading, .defi-controls { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.defi-heading { justify-content: space-between; }
+.defi-controls label { display: flex; align-items: center; gap: 8px; }
+.defi-controls input { width: 320px; }
+.defi-panel p { line-height: 1.6; font-size: 11px; max-width: 1150px; }
+.defi-table-wrap { overflow: auto; max-height: 50vh; margin-top: 12px; }
+.defi-panel table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.defi-panel th, .defi-panel td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.defi-panel th { position: sticky; top: 0; background: var(--bg1); }
+.defi-panel button, .defi-panel input { background: var(--bg2); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 10px; font: inherit; }
+.defi-panel button:disabled { opacity: .45; cursor: default; }
+.defi-view[hidden] { display: none; }
+.defi-view { display: flex; flex: 1; min-height: 0; flex-direction: column; padding: 12px; gap: 8px; overflow: hidden; }
+body.defi-active > .controls, body.defi-active > .main-content, body.defi-active > .legend { display: none; }
+body.defi-active .stats-bar, body.defi-active .tooltip { display: none; }
+.header button[role="tab"][aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
+.defi-view .defi-controls { flex-wrap: wrap; flex-shrink: 0; }
+.defi-controls label { display: inline-flex; align-items: center; gap: 6px; }
+.defi-view button, .defi-view input, .defi-view select { font: inherit; color: var(--text); background: var(--bg2); border: 1px solid var(--border); padding: 6px 8px; }
+.defi-view button:disabled { opacity: .45; cursor: default; }
+#defiMaxId, #defiGas { width: 65px; }
+#defiAccounts { width: 135px; }
+#defiProtocol { max-width: 220px; }
+#defiInfo { line-height: 1.6; max-width: 1200px; }
+.defi-grid-wrap { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--border); }
+.defi-workspace { display: flex; flex: 1; min-height: 0; gap: 12px; }
+.defi-workspace .defi-grid-wrap { min-width: 0; }
+.defi-sidebar { overflow: auto; }
+.defi-sidebar .token-choice { background: transparent; padding: 4px; border-color: transparent; }
+.defi-sidebar .token-choice.selected { border-color: var(--accent); background: var(--accent-dim); }
+.defi-sidebar .token-choice:hover { background: var(--bg2); }
+.defi-sidebar .token-value { gap: 4px; }
+#defiSummary { font-size: 10px; color: var(--text2); line-height: 1.6; }
+@media (max-width: 720px) { .defi-workspace { flex-direction: column; overflow: auto; } .defi-workspace .defi-grid-wrap { flex: 0 0 60vh; } .defi-sidebar { flex: none; width: 100%; max-width: none; } }
+.defi-grid { width: 100%; border-collapse: separate; border-spacing: 2px; font-size: 12px; }
+.defi-grid th { position: sticky; top: 0; z-index: 1; background: var(--bg1); padding: 8px; white-space: nowrap; }
+.defi-grid td { padding: 2px; text-align: center; vertical-align: middle; }
+.defi-wallet { text-align: left !important; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.defi-grid .defi-heat { display: flex; align-items: center; justify-content: center; width: 100%; min-width: 85px; height: 26px; box-sizing: border-box; line-height: 1; border-radius: 0; color: #fff; font-weight: bold; padding: 4px 8px; border-color: transparent; }
+.defi-heat.negative { background: #823e3e; }
+.defi-heat.empty { background: var(--bg2); color: var(--text-muted, #aaa); }
+.defi-heat:hover { outline: 1px solid var(--accent); }
+.token-choice { display: block; width: 100%; padding: 4px; text-align: left; font: inherit; color: var(--text); background: transparent; border: 1px solid transparent; cursor: pointer; }
+.token-choice:hover { background: var(--bg2); }
+.token-choice.selected { border-color: var(--accent); background: var(--accent-dim); }
+.token-choice:focus-visible { outline: 1px solid var(--accent); }
+.token-pick-hint { display: block; margin-top: 6px; color: var(--text2); font-size: 9px; text-transform: none; }
+#topTokens { max-height: 65vh; overflow-y: auto; }
+.account-id-button, .defi-view .account-id-button { display: flex; align-items: center; justify-content: center; width: 100%; min-width: 28px; min-height: 26px; padding: 2px 4px; font: inherit; color: var(--text); background: transparent; border: 1px solid transparent; cursor: pointer; }
+.account-id-button:hover, .defi-view .account-id-button:hover { border-color: var(--accent); }
+.account-id-button.selected, .defi-view .account-id-button.selected { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); font-weight: bold; }
+.account-id-button:focus-visible { outline: 1px solid var(--accent); }
+#defiPreviewRows > div { padding: 6px 0; overflow-wrap: anywhere; }
+.defi-panel.defi-confirm { width: min(680px, 92vw); max-height: 85vh; margin: auto; }
+.defi-confirm .defi-table-wrap { border: 0; }
+.defi-confirm .defi-quote-field { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 16px; border-bottom: 1px solid var(--border); }
+.defi-quote-field > span { color: var(--text-muted, #aaa); }
+.defi-quote-field > strong { font-weight: 500; overflow-wrap: anywhere; }
+#defiPreviewConfirm { float: right; margin-top: 8px; }
+.defi-skipped { color: var(--text-muted, #aaa); }
+#defiDetailStatus { padding: 8px 0; overflow-wrap: anywhere; }
+#defiExitStatus { margin-top: 10px; overflow-wrap: anywhere; }
+/* Password warnings use the same compact popup typography. */
+.caps-lock-hint { color: #e3b341; font-size: 12px; text-align: left; margin: 4px 0 8px; }
+.caps-lock-hint[hidden] { display: none; }

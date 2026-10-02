@@ -28,7 +28,8 @@ public class HeatmapGenerator
         public string PriceUSD { get; set; }
         public int ChainId { get; set; }
         public string Address { get; set; }
-        public decimal ValueUSD { get; set; }
+        // Never trust a cached ValueUSD from an older provider or calculation.
+        public decimal ValueUSD => BalanceMath.GetValueUsd(Amount, Decimals, PriceUSD);
     }
     
     public List<AccountData> GetTreasuryData(int maxId = 1000, List<string> selectedChains = null)
@@ -55,9 +56,14 @@ public class HeatmapGenerator
                 {
                     try {
                         var tokens = JsonConvert.DeserializeObject<List<TokenInfo>>(chainJson);
-                        if (tokens != null && tokens.Count > 0)
-                            accountData.ChainData[chainName] = tokens;
-                    } catch { /* log error */ }
+                        if (tokens != null)
+                        {
+                            // Legacy DeBank amounts are already scaled and lack chainId/priceUSD.
+                            // They must be refreshed, not interpreted as raw blockchain amounts.
+                            tokens = tokens.Where(t => t.ChainId > 0 && t.ValueUSD > 0).ToList();
+                            if (tokens.Count > 0) accountData.ChainData[chainName] = tokens;
+                        }
+                    } catch (JsonException ex) { Console.WriteLine($"Invalid balance JSON: account {id}, {chainName}: {ex.Message}"); }
                 }
             }
             result.Add(accountData);

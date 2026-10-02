@@ -2,6 +2,10 @@
 
     <PropertyGroup>
         <OutputType>WinExe</OutputType>
+        <Version>1.0.0</Version>
+        <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <FileVersion>1.0.0.0</FileVersion>
+        <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
         <TargetFramework>net8.0-windows</TargetFramework>
         <UseWindowsForms>true</UseWindowsForms>
 
@@ -37,6 +41,10 @@
         <Content Include="icon.ico">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </Content>
+        <Content Update="wwwroot\**\*">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        </Content>
     </ItemGroup>
 
     <ItemGroup>
@@ -44,6 +52,8 @@
     </ItemGroup>
 
     <ItemGroup>
+        <Content Remove="logs\**;tests\**;publish-new\**;installer_output\**" />
+        <Compile Remove="tests\**\*.cs" />
         <Compile Remove="TasksLiFi.cs" />
         <Compile Remove="Tasks.cs" />
         <Compile Remove="Api\Relay.cs" />

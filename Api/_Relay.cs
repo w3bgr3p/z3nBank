@@ -222,7 +222,7 @@ namespace RelayBridge
             string content = "no content";
             try
             {
-                var response = await _httpClient.GetAsync($"{_baseUrl}/chains");
+                var response = await _httpClient.GetAsync($"{_baseUrl}/chains", z3nSafe.SwapExecution.Token);
                 content = await response.Content.ReadAsStringAsync(); // Сначала читаем ответ
 
                 if (!response.IsSuccessStatusCode)
@@ -233,7 +233,7 @@ namespace RelayBridge
         
                 return JsonConvert.DeserializeObject<List<Dictionary<string, object>>>(content);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not z3nSafe.ReceiptUnavailableException)
             {
                 // Передаем сырой ответ API (content) в обработчик
                 throw HandleApiError(ex, "GetChains", content);
@@ -245,12 +245,12 @@ namespace RelayBridge
             string content = "no content";
             try
             {
-                var response = await _httpClient.GetAsync($"{_baseUrl}/currencies/token/price?address={address}&chainId={chainId}");
+                var response = await _httpClient.GetAsync($"{_baseUrl}/currencies/token/price?address={address}&chainId={chainId}", z3nSafe.SwapExecution.Token);
                 content = await response.Content.ReadAsStringAsync(); // Сначала читаем ответ
                 response.EnsureSuccessStatusCode();
                 return JsonConvert.DeserializeObject<Dictionary<string, object>>(content);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not z3nSafe.ReceiptUnavailableException)
             {
                 throw HandleApiError(ex, "getTokenPrice", content);
             }
@@ -269,13 +269,13 @@ namespace RelayBridge
                 var json = JsonConvert.SerializeObject(payload);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                var response = await _httpClient.PostAsync($"{_baseUrl}/transactions/index", content);
+                var response = await _httpClient.PostAsync($"{_baseUrl}/transactions/index", content, z3nSafe.SwapExecution.Token);
                 response.EnsureSuccessStatusCode();
 
                 var responseContent = await response.Content.ReadAsStringAsync();
                 return JsonConvert.DeserializeObject<Dictionary<string, object>>(responseContent);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not z3nSafe.ReceiptUnavailableException)
             {
                 _log?.Send($"⚠️ Не удалось уведомить о транзакции: {ex.Message}");
                 return null;
@@ -318,7 +318,7 @@ namespace RelayBridge
                     var quoteBody = new StringContent(json, Encoding.UTF8, "application/json");
                     
 
-                    var response = await _httpClient.PostAsync($"{_baseUrl}/quote", quoteBody);
+                    var response = await _httpClient.PostAsync($"{_baseUrl}/quote", quoteBody, z3nSafe.SwapExecution.Token);
 
                     content = await response.Content.ReadAsStringAsync();
                     
@@ -332,7 +332,7 @@ namespace RelayBridge
 
                     return quoteResponse;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException && ex is not z3nSafe.ReceiptUnavailableException)
                 {
                     if (attempt == maxRetries - 1 || !IsRetryableError(ex))
                     {
@@ -340,7 +340,7 @@ namespace RelayBridge
                         throw HandleApiError(ex, "GetQuote",content);
                     }
                     _log?.Send($"⚠️ Ошибка получения quote (попытка {attempt + 1}/{maxRetries}): {ex.Message}");
-                    await Task.Delay(retryDelay);
+                    await z3nSafe.SwapExecution.Delay(retryDelay);
                 }
             }
 
@@ -352,13 +352,13 @@ namespace RelayBridge
             string content = "no content";
             try
             {
-                var response = await _httpClient.GetAsync($"{_baseUrl}/intents/status/v2?requestId={requestId}");
+                var response = await _httpClient.GetAsync($"{_baseUrl}/intents/status/v2?requestId={requestId}", z3nSafe.SwapExecution.Token);
                 content = await response.Content.ReadAsStringAsync();
                 response.EnsureSuccessStatusCode();
 
                 return JsonConvert.DeserializeObject<ExecutionStatus>(content);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not z3nSafe.ReceiptUnavailableException)
             {
                 throw HandleApiError(ex, "GetExecutionStatus",content);
             }
@@ -377,6 +377,7 @@ namespace RelayBridge
 
             foreach (var step in quote.Steps)
             {
+                z3nSafe.SwapExecution.Check();
                 _log?.Send($"\n📋 Шаг: {step.Id} ({step.Kind})");
                 if (!string.IsNullOrEmpty(step.Description))
                 {
@@ -385,6 +386,7 @@ namespace RelayBridge
 
                 foreach (var item in step.Items)
                 {
+                    z3nSafe.SwapExecution.Check();
                     if (step.Kind == "transaction")
                     {
                         try
@@ -399,7 +401,9 @@ namespace RelayBridge
                             var txHash = await SendTxAsync(account, txData, web3);
                             _log?.Send($"   => TX sent: {txHash}");
 
-                            var receipt = await WaitForTxReceipt(txHash, web3);
+                            var receipt = await WaitForTxReceipt(txHash, web3, chainId: txData.ChainId);
+                            if (receipt.Status?.Value == 0)
+                                throw new InvalidOperationException($"Transaction reverted on-chain. TX: {txHash}");
 
                             if (receipt?.Status?.Value == 0)
                             {
@@ -425,7 +429,7 @@ namespace RelayBridge
                                     {
                                         _log?.Send(
                                             $"   ⏳ Статус: {status.Status} (попытка {attempts + 1}/{maxStatusAttempts})");
-                                        await Task.Delay(5000);
+                                        await z3nSafe.SwapExecution.Delay(5000);
                                         status = await GetExecutionStatusAsync(requestId);
                                         attempts++;
                                     }
@@ -460,7 +464,7 @@ namespace RelayBridge
                                 });
                             }
                         }
-                        catch (Exception ex)
+                        catch (Exception ex) when (ex is not OperationCanceledException && ex is not z3nSafe.ReceiptUnavailableException)
                         {
                             var errorMessage = ex.Message;
                             _log?.Send($"   ❌ Ошибка шага {step.Id}: {errorMessage}");
@@ -516,7 +520,7 @@ namespace RelayBridge
                                 var json = JsonConvert.SerializeObject(postBody);
                                 var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                                var response = await _httpClient.PostAsync(postUrl, content);
+                                var response = await _httpClient.PostAsync(postUrl, content, z3nSafe.SwapExecution.Token);
                                 response.EnsureSuccessStatusCode();
                                 _log?.Send($"   ✅ Подпись отправлена успешно");
                             }
@@ -528,7 +532,7 @@ namespace RelayBridge
                                 Signature = signature
                             });
                         }
-                        catch (Exception ex)
+                        catch (Exception ex) when (ex is not OperationCanceledException && ex is not z3nSafe.ReceiptUnavailableException)
                         {
                             _log?.Send($"   ❌ Ошибка подписи: {ex.Message}");
                             results.Add(new StepResult
@@ -575,21 +579,20 @@ namespace RelayBridge
             // САМОСТОЯТЕЛЬНЫЙ РАСЧЕТ ГАЗА (не доверяем API)
             // Получаем текущую цену газа из сети
             var networkGasPrice = await web3.Eth.GasPrice.SendRequestAsync();
+            _log?.Send(z3nSafe.GasPricing.Describe(networkGasPrice.Value), "INFO");
             
-            // Добавляем буфер 20% к цене газа для приоритета
-            var boostedGasPrice = new HexBigInteger((networkGasPrice.Value * 120) / 100);
+            // Применяем выбранную в интерфейсе надбавку к текущей цене газа.
+            var boostedGasPrice = new HexBigInteger(z3nSafe.GasPricing.Price(networkGasPrice.Value));
             txInput.GasPrice = boostedGasPrice;
 
             // Оцениваем лимит газа
-            var estimatedGas = await web3.Eth.Transactions.EstimateGas.SendRequestAsync(txInput);
-            
-            // Добавляем буфер 10% к лимиту газа для безопасности
-            txInput.Gas = new HexBigInteger((estimatedGas.Value * 110) / 100);
+            txInput.Gas = await z3nSafe.TransactionGas.EstimateAsync(web3, txInput);
 
             _log?.Send($"   ⛽ Price={txInput.GasPrice.Value}, Limit={txInput.Gas.Value}");
 
             // Отправляем транзакцию
-            var txHash = await web3.Eth.TransactionManager.SendTransactionAsync(txInput);
+            z3nSafe.SwapExecution.Check();
+            var txHash = await z3nSafe.TransactionBroadcast.SendAsync(web3, txInput, txData.ChainId, _log);
             
             // Уведомляем API об отправленной транзакции (для индексации)
             try
@@ -628,7 +631,7 @@ namespace RelayBridge
                     return result;
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not z3nSafe.ReceiptUnavailableException)
             {
                 throw new Exception($"Не удалось распарсить BigInteger из значения: {value}. Ошибка: {ex.Message}");
             }
@@ -639,33 +642,11 @@ namespace RelayBridge
         /// <summary>
         /// Ожидание подтверждения транзакции в блокчейне
         /// </summary>
-        private async Task<TransactionReceipt> WaitForTxReceipt(
-            string txHash, 
-            Web3 web3, 
-            int maxAttempts = 60)
+        private async Task<TransactionReceipt> WaitForTxReceipt(string txHash, Web3 web3, int maxAttempts = 60, int chainId = 0)
         {
-            var attempts = 0;
-
-            while (attempts < maxAttempts)
-            {
-                try
-                {
-                    var receipt = await web3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(txHash);
-                    if (receipt != null)
-                    {
-                        return receipt;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _log?.Send($"   ⚠️ Ошибка получения receipt (попытка {attempts + 1}/{maxAttempts}): {ex.Message}");
-                }
-
-                attempts++;
-                await Task.Delay(5000);
-            }
-
-            throw new Exception($"Не удалось получить receipt для транзакции {txHash} после {maxAttempts} попыток");
+            return await z3nSafe.ReceiptWaiter.WaitAsync(
+                () => web3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(txHash), txHash, _log, maxAttempts,
+                fallback: z3nSafe.ReceiptWaiter.Fallback(chainId, txHash));
         }
 
         /// <summary>

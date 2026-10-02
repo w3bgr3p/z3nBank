@@ -29,7 +29,7 @@ public static class DBuilder
         {
             string tableName = tableEntry.Key;
             List<string> columns = tableEntry.Value;
-            db.PrepareTable(columns, tableName, log: true, prune: false, rearrange: true);
+            db.PrepareTable(columns, tableName, log: true, prune: false, rearrange: false);
         }
     }
     public static async Task ImportWalletsAsync(Db db, List<string> evmWallets, List<string> solKeys = null, string pin = null)
