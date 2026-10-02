@@ -1,8 +1,33 @@
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using z3nSafe;
 using z3n;
 using System.Globalization;
 using System.Net;
+
+if (args.Length == 2 && args[0] == "--rpc-audit-live")
+{
+    var audit = JObject.Parse(File.ReadAllText(args[1]))["results"]!.OfType<JObject>()
+        .Where(r => (bool?)r["ok"] == true && r["checks"]?["eth_blockNumber"] != null).ToArray();
+    using var concurrency = new SemaphoreSlim(6);
+    var failed = 0;
+    await Task.WhenAll(audit.Select(async entry => {
+        await concurrency.WaitAsync();
+        try {
+            var id = (int)entry["expectedId"]!;
+            var tokens = new List<Jumper.TokenInfo> { new() { Address = "0x0000000000000000000000000000000000000000", ChainId = id, Decimals = 18, PriceUSD = "0" } };
+            if ((string?)entry["token"] is string token) tokens.Add(new() { Address = token, ChainId = id, Decimals = 18, PriceUSD = "0" });
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            await TreasuryRpcBalances.Read(new Nethereum.Web3.Web3(Rpc.Get(id)), id,
+                "0x0000000000000000000000000000000000000001", tokens, cancellation: timeout.Token);
+            Console.WriteLine($"PASS: Nethereum/RPC balance reads | {entry["network"]} | {id}");
+        } catch (Exception ex) { Interlocked.Increment(ref failed); Console.WriteLine($"FAIL: {entry["network"]} | {ex.Message}"); }
+        finally { concurrency.Release(); }
+    }));
+    Console.WriteLine($"Live Nethereum audit: {audit.Length - failed}/{audit.Length}");
+    Environment.ExitCode = failed == 0 ? 0 : 1;
+    return;
+}
 
 if (args.Length == 1 && args[0] == "--db-persistence")
 {

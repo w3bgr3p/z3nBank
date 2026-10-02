@@ -34,6 +34,9 @@ internal static class DbPersistenceChecks
             check("Optimism RPC resolves by LI.FI name and by Chain ID", Rpc.Get("OP Mainnet") == Rpc.Optimism && Rpc.Get(10) == Rpc.Optimism);
             check("Other LI.FI network names resolve to configured RPCs", Rpc.Get("Arbitrum One") == Rpc.Arbitrum && Rpc.Get("zkSync Era") == Rpc.Zksync && Rpc.Get("Manta Pacific") == Rpc.Manta);
             check("Celo balances have a configured RPC", Rpc.Get(42220) == Rpc.Get("Celo"));
+            check("Unichain, Monad and Neura resolve their audited chain IDs", Rpc.ChainId("Unichain") == 130 && Rpc.ChainId("MonadTestnet") == 10143 && Rpc.ChainId("NeuraTestnet") == 267);
+            var unavailable = false; try { Rpc.Get(543210); } catch (InvalidOperationException ex) { unavailable = ex.Message.Contains("public RPC unavailable"); }
+            check("Unavailable ZERO RPC has an explicit reason instead of an invalid endpoint", unavailable);
         }
         finally { Directory.Delete(directory, recursive: true); }
     }

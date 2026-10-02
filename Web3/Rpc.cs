@@ -16,7 +16,7 @@ using System.Collections.Generic;
         Scroll = 534352,
         Soneium = 1868,
         Taiko = 167000,
-        Unichain = 1301,
+        Unichain = 130,
         Zero = 543210,
         Zora = 7777777,
         Zksync = 324,
@@ -29,8 +29,8 @@ using System.Collections.Generic;
     
         // Testnets
         Sepolia = 11155111,
-        MonadTestnet = 41454,
-        NeuraTestnet = 999999,
+        MonadTestnet = 10143,
+        NeuraTestnet = 267,
     
         // Другие сети
         Avalanche = 43114,
@@ -56,7 +56,7 @@ using System.Collections.Generic;
             {RpcUrl.Base, "https://base-rpc.publicnode.com"},
             {RpcUrl.Celo, "https://forno.celo.org"},
             {RpcUrl.Blast, "https://rpc.blast.io"},
-            {RpcUrl.Fantom, "https://rpc.fantom.network"},
+            {RpcUrl.Fantom, "https://fantom.drpc.org"},
             {RpcUrl.Linea, "https://rpc.linea.build"},
             {RpcUrl.Manta, "https://pacific-rpc.manta.network/http"},
             {RpcUrl.Optimism, "https://optimism-rpc.publicnode.com"},
@@ -64,21 +64,21 @@ using System.Collections.Generic;
             {RpcUrl.Soneium, "https://rpc.soneium.org"},
             {RpcUrl.Taiko, "https://rpc.mainnet.taiko.xyz"},
             {RpcUrl.Unichain, "https://unichain.drpc.org"},
-            {RpcUrl.Zero, "https://zero.drpc.org"},
+            {RpcUrl.Zero, "https://rpc.zerion.io/v1/zero"},
             {RpcUrl.Zksync, "https://mainnet.era.zksync.io"},
-            {RpcUrl.Zora, "https://rpc.zora.energy"},
+            {RpcUrl.Zora, "https://zora.drpc.org"},
             
             
             {RpcUrl.Avalanche, "https://avalanche-c-chain.publicnode.com"},
             {RpcUrl.Bsc, "https://bsc-dataseed.bnbchain.org"},
-            {RpcUrl.Gravity, "https://rpc.gravity.xyz"},
+            {RpcUrl.Gravity, "https://gravity-alpha.drpc.org"},
             {RpcUrl.Gnosis, "https://rpc.gnosischain.com"},
             {RpcUrl.Opbnb, "https://opbnb-mainnet-rpc.bnbchain.org"},
             {RpcUrl.Polygon, "https://polygon-bor-rpc.publicnode.com"},
             {RpcUrl.Mantle, "https://rpc.mantle.xyz"},
             
             
-            {RpcUrl.Sepolia, "https://eth-sepolia.api.onfinality.io/public"},
+            {RpcUrl.Sepolia, "https://ethereum-sepolia-rpc.publicnode.com"},
             {RpcUrl.MonadTestnet, "https://testnet-rpc.monad.xyz"},
             {RpcUrl.Aptos, "https://fullnode.mainnet.aptoslabs.com/v1"},
             {RpcUrl.NeuraTestnet, "https://testnet.rpc.neuraprotocol.io"},
@@ -87,9 +87,11 @@ using System.Collections.Generic;
             {RpcUrl.Solana_Testnet, "https://api.testnet.solana.com"}
         };
 
-        public static string Get(RpcUrl network) => _rpcs[network];
+        public static string Get(RpcUrl network) => Get((int)network);
 
-        public static string Get(int chainId) => _rpcs.TryGetValue((RpcUrl)chainId, out var url) ? url
+        public static string Get(int chainId) => chainId == (int)RpcUrl.Zero
+            ? throw new InvalidOperationException("ZERO Network (543210): public RPC unavailable; the official endpoint returns 'Node is not available'. Previous balances must be kept.")
+            : _rpcs.TryGetValue((RpcUrl)chainId, out var url) ? url
             : throw new ArgumentException($"No RPC configured for chain ID {chainId}");
 
         public static int ChainId(string name)
@@ -113,13 +115,13 @@ using System.Collections.Generic;
         {
             name = Normalize(name);
             if (Enum.TryParse<RpcUrl>(name, true, out var network))
-                return _rpcs[network];
+                return Get(network);
             
             var normalized = name.Replace("_", "").Trim();
             foreach (RpcUrl net in Enum.GetValues(typeof(RpcUrl)))
             {
                 if (string.Equals(net.ToString().Replace("_", ""), normalized, StringComparison.OrdinalIgnoreCase))
-                    return _rpcs[net];
+                    return Get(net);
             }
             
             throw new ArgumentException($"No RpcUrl provided for '{name}'");
@@ -147,7 +149,7 @@ using System.Collections.Generic;
         public static string Soneium => _rpcs[RpcUrl.Soneium];
         public static string Taiko => _rpcs[RpcUrl.Taiko];
         public static string Unichain => _rpcs[RpcUrl.Unichain];
-        public static string Zero => _rpcs[RpcUrl.Zero];
+        public static string Zero => Get(RpcUrl.Zero);
         public static string Zksync => _rpcs[RpcUrl.Zksync];
         public static string Zora => _rpcs[RpcUrl.Zora];
         public static string Avalanche => _rpcs[RpcUrl.Avalanche];
