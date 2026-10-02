@@ -687,10 +687,12 @@ function toggleAutoRefresh() {
 }
 
 async function updateBalances() {
+    const maxId = document.getElementById('maxIdInput').value;
+    const accountIds = [...selectedTreasuryAccounts].sort((a, b) => a - b);
     const result = await Swal.fire({
         icon: 'question',
         title: 'Start Balance Update?',
-        text: 'This may take a while.',
+        text: accountIds.length ? `Update balances for ${accountIds.length} selected accounts?` : `Update all accounts up to Max ID ${maxId}?`,
         background: '#161b22',
         color: '#c9d1d9',
         showCancelButton: true,
@@ -700,10 +702,9 @@ async function updateBalances() {
 
     if (!result.isConfirmed) return;
 
-    const maxId = document.getElementById('maxIdInput').value;
-
     try {
-        const response = await fetch(`${API_BASE}/update?maxId=${maxId}&minValue=0.001`, {
+        const selectedQuery = accountIds.map(id => `&accountIds=${id}`).join('');
+        const response = await fetch(`${API_BASE}/update?maxId=${maxId}&minValue=0.001${selectedQuery}`, {
             method: 'POST'
         });
         const result = await response.json();

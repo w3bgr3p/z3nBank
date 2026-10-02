@@ -298,9 +298,13 @@ public partial class TreasuryController : ControllerBase
     }
 
     [HttpPost("update")]
-    public async Task<IActionResult> UpdateBalances([FromQuery] int maxId = 100, [FromQuery] decimal minValue = 0.001m)
+    public async Task<IActionResult> UpdateBalances([FromQuery] int maxId = 100, [FromQuery] decimal minValue = 0.001m,
+        [FromQuery] int[]? accountIds = null)
     {        
         if (maxId < 1 || minValue < 0) return BadRequest(new { error = "maxId must be positive and minValue non-negative" });
+        if (accountIds?.Any(id => id < 1 || id > maxId) == true)
+            return BadRequest(new { error = "Selected account IDs must be within Max ID" });
+        var targets = TasksDb.BalanceUpdateAccounts(maxId, accountIds);
         var dbCheck = CheckDbConnection(); 
         if (dbCheck != null) return dbCheck;
 
@@ -322,7 +326,7 @@ public partial class TreasuryController : ControllerBase
             {
                 try
                 {
-                    var result = await TasksDb.UpdateDb(db, maxId, minValue, progress: value =>
+                    var result = await TasksDb.UpdateDb(db, maxId, minValue, accountIds: targets, progress: value =>
                     {
                         lock (UpdateLock) _updateProgress = value;
                     });
@@ -343,7 +347,7 @@ public partial class TreasuryController : ControllerBase
                 }
             });
 
-            return Accepted(new { message = "Update started", maxId, minValue });
+            return Accepted(new { message = $"Update started: {targets.Length} accounts", maxId, minValue, accounts = targets.Length });
         }
         catch (Exception ex)
         {

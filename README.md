@@ -328,6 +328,8 @@ Hover over any cell to see:
 - Click the 🔄 Refresh button
 - Enter max account ID to scan
 - **Refresh** reloads the saved database snapshot; **Update Balances** fetches new token amounts and prices from LI.FI
+  for selected Treasury accounts. With no selected accounts, it updates the entire current Max ID range.
+  The confirmation shows the scope and freezes the selected account IDs for that run.
 
 **Auto-refresh:**
 - Click "Auto: OFF" to toggle automatic updates

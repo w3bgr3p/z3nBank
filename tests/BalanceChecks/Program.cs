@@ -4,6 +4,14 @@ using z3n;
 using System.Globalization;
 using System.Net;
 
+if (args.Length == 1 && args[0] == "--balance-selection")
+{
+    var errors = 0;
+    await BalanceSelectionChecks.Run((name, passed) => { Console.WriteLine($"{(passed ? "PASS" : "FAIL")}: {name}"); if (!passed) errors++; });
+    Environment.ExitCode = errors == 0 ? 0 : 1;
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--db-login-live")
 {
     var service = new DbConnectionService();

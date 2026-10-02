@@ -26,9 +26,11 @@ public class TasksDb
     public sealed record UpdateResult(int Processed, int Updated, int Failed, int Skipped, int CurrentId);
 
     public static async Task<UpdateResult> UpdateDb(Db dbConnection, int dbRange = 1000,
-        decimal minValue = 0.001m, Logger? log = null, Action<UpdateResult>? progress = null, Jumper? client = null)
+        decimal minValue = 0.001m, Logger? log = null, Action<UpdateResult>? progress = null, Jumper? client = null,
+        IReadOnlyCollection<int>? accountIds = null)
     {
         if (dbRange < 1 || minValue < 0) throw new ArgumentOutOfRangeException(nameof(dbRange));
+        var targets = BalanceUpdateAccounts(dbRange, accountIds);
         var db = dbConnection;
         log ??= new Logger(true);
         using var ownedClient = client == null ? new Jumper(log) : null;
@@ -37,7 +39,8 @@ public class TasksDb
         var updated = 0;
         var failed = 0;
         var skipped = 0;
-        for (var id = 1; id <= dbRange; id++)
+        var processed = 0;
+        foreach (var id in targets)
         {
             log._acc = id.ToString();
             try
@@ -68,9 +71,17 @@ public class TasksDb
                 failed++;
                 log.Send($"Balance update failed; previous data kept: {ex.Message}", "ERROR");
             }
-            finally { progress?.Invoke(new UpdateResult(id, updated, failed, skipped, id)); }
+            finally { processed++; progress?.Invoke(new UpdateResult(processed, updated, failed, skipped, id)); }
         }
-        return new UpdateResult(dbRange, updated, failed, skipped, dbRange);
+        return new UpdateResult(processed, updated, failed, skipped, targets.LastOrDefault());
+    }
+
+    public static int[] BalanceUpdateAccounts(int maxId, IReadOnlyCollection<int>? accountIds)
+    {
+        if (maxId < 1) throw new ArgumentOutOfRangeException(nameof(maxId));
+        if (accountIds == null || accountIds.Count == 0) return Enumerable.Range(1, maxId).ToArray();
+        if (accountIds.Any(id => id < 1 || id > maxId)) throw new ArgumentOutOfRangeException(nameof(accountIds), "Selected account IDs must be within Max ID");
+        return accountIds.Distinct().OrderBy(id => id).ToArray();
     }
     
     public async Task<List<AccountData>> GetTreasuryData(Db _db, int maxId = 1000, List<string> selectedChains = null)
