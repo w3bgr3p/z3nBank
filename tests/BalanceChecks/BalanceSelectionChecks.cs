@@ -7,10 +7,12 @@ internal static class BalanceSelectionChecks
     private sealed class Handler : HttpMessageHandler
     {
         public int Calls;
+        public bool FailNext;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             var chains = request.RequestUri!.AbsolutePath.EndsWith("/chains");
             if (!chains) Calls++;
+            if (!chains && FailNext) { FailNext = false; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)); }
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(chains
                 ? "{\"chains\":[{\"id\":1,\"name\":\"Ethereum\",\"key\":\"eth\"}]}"
                 : "{\"walletAddress\":\"0x1111111111111111111111111111111111111111\",\"balances\":{}}") });
@@ -38,6 +40,16 @@ internal static class BalanceSelectionChecks
             check("Absent selection preserves the same all-account behavior", TasksDb.BalanceUpdateAccounts(3, null).SequenceEqual(new[] { 1, 2, 3 }));
             var rejected = false; try { TasksDb.BalanceUpdateAccounts(3, [4]); } catch (ArgumentOutOfRangeException) { rejected = true; }
             check("Out-of-range selection is rejected instead of widening the update", rejected);
+            var recovery = BalanceUpdateFailure.Describe(69, "Save balance snapshot",
+                new AggregateException(new Npgsql.PostgresException("the database system is in recovery mode", "FATAL", "FATAL", "57P03")));
+            check("PostgreSQL recovery includes its stage, SQLSTATE and actionable explanation", recovery.StopsBatch && recovery.Code == "57P03" && recovery.Stage == "Save balance snapshot" && recovery.Reason.Contains("восстанавливается") && recovery.Details.Contains("recovery mode"));
+            handler.FailNext = true;
+            result = await TasksDb.UpdateDb(db, 3, client: client, log: new Logger(false, http: false));
+            check("Individual API failure records its stage and still updates following accounts", !result.Stopped && result.Failed == 1 && result.Updated == 2 && result.Failures.Single().Stage == "Fetch wallet balances");
+            db.Query("DROP TABLE _addresses", thrw: true);
+            var beforeFailure = handler.Calls;
+            result = await TasksDb.UpdateDb(db, 3, client: client, log: new Logger(false, http: false));
+            check("Shared database failure halts the run and counts untouched accounts separately", result.Stopped && result.Failed == 1 && result.Processed == 1 && result.Unprocessed == 2 && result.Failures.Single().Stage == "Read wallet address" && handler.Calls == beforeFailure);
         } finally { File.Delete(path); }
     }
 }

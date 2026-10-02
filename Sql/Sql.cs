@@ -213,7 +213,7 @@ namespace z3n
 
                 Debug.WriteLine($"Error: {ex.Message}");
                 Debug.WriteLine($"Executed query: {formattedQuery}");
-                throw new Exception($"{ex.Message} : [{sql}]");
+                throw new Exception($"{ex.Message} : [{sql}]", ex);
             }
         }
 

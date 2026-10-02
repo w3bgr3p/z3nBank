@@ -337,6 +337,12 @@ Hover over any cell to see:
 
 Successful balance updates replace the entire wallet snapshot, including chains that are now empty. Failed requests keep the previous data and appear in the update status. Only positive token values above the requested minimum are stored. The public LI.FI API allows 10 requests per minute; updates are paced and HTTP 429 responses are retried after waiting.
 
+The update report includes failed account IDs, the failing stage, the error code and an explanation.
+Shared database failures (including PostgreSQL recovery, SQLSTATE `57P03`) stop the run instead of repeating
+the same failure for every wallet. Accounts not attempted are counted separately; individual wallet API errors
+still allow the next account to run. When PostgreSQL is recovering, wait for it to become ready and retry;
+the PostgreSQL server log explains why recovery started.
+
 USD values are estimates from token amounts and API prices, before fees and slippage. Cached USD totals are recalculated on read. Legacy DeBank records use a different amount format and must be refreshed before they can be included. Tokens flagged as denied or malicious by the provider are excluded; unverified tokens may still be returned.
 
 ### Filtering by Chains

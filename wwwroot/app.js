@@ -741,13 +741,21 @@ async function monitorBalanceUpdate() {
             if (!response.ok) throw new Error(`Update status returned ${response.status}`);
             const status = await response.json();
             const progress = status.progress || { updated: 0, failed: 0, processed: 0 };
-            label.textContent = `${status.running ? 'Updating' : 'Finished'}: ${progress.processed} checked, ${progress.updated} updated, ${progress.failed} failed`;
+            label.textContent = `${status.running ? 'Updating' : progress.stopped ? 'Stopped' : 'Finished'}: ${progress.processed} checked, ${progress.updated} updated, ${progress.failed} failed` +
+                (progress.stopped ? `, ${progress.unprocessed} not attempted` : '');
             if (!status.running) {
-                await refreshData();
+                if (!progress.stopped) await refreshData();
                 if (status.error || progress.failed > 0) {
+                    const failures = progress.failures || [], groups = new Map();
+                    for (const failure of failures) {
+                        const key = `${failure.stage} · ${failure.code} · ${failure.reason}`;
+                        const group = groups.get(key) || { failure, ids: [] }; group.ids.push(failure.accountId); groups.set(key, group);
+                    }
+                    const reasons = [...groups.values()].map(({ failure, ids }) =>
+                        `Accounts: ${ids.join(', ')}\nStage: ${failure.stage}\n${failure.reason}\n${failure.code}: ${failure.details}`);
                     await Swal.fire({
                         icon: 'warning', title: 'Balance update incomplete',
-                        text: status.error || `${progress.failed} wallets failed. Their previous balances were kept; see logs.`,
+                        text: [status.error, `${progress.updated} updated; ${progress.failed} failed; ${progress.unprocessed || 0} not attempted. Previous balances kept for failed accounts.`, ...reasons].filter(Boolean).join('\n\n'),
                         background: '#161b22', color: '#c9d1d9'
                     });
                 }

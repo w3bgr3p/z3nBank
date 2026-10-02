@@ -23,7 +23,13 @@ public class TasksDb
     }
     
     
-    public sealed record UpdateResult(int Processed, int Updated, int Failed, int Skipped, int CurrentId);
+    public sealed record UpdateResult(int Processed, int Updated, int Failed, int Skipped, int CurrentId)
+    {
+        public int Total { get; init; }
+        public int Unprocessed { get; init; }
+        public bool Stopped { get; init; }
+        public BalanceUpdateFailure[] Failures { get; init; } = [];
+    }
 
     public static async Task<UpdateResult> UpdateDb(Db dbConnection, int dbRange = 1000,
         decimal minValue = 0.001m, Logger? log = null, Action<UpdateResult>? progress = null, Jumper? client = null,
@@ -35,23 +41,30 @@ public class TasksDb
         log ??= new Logger(true);
         using var ownedClient = client == null ? new Jumper(log) : null;
         var jumper = client ?? ownedClient!;
-        var chainNames = await jumper.GetChainMapping();
+        Dictionary<int, string>? chainNames = null;
         var updated = 0;
         var failed = 0;
         var skipped = 0;
+        var failures = new List<BalanceUpdateFailure>(); var stopped = false; var currentId = 0;
         var processed = 0;
+        UpdateResult Report() => new(processed, updated, failed, skipped, currentId) {
+            Total = targets.Length, Unprocessed = targets.Length - processed, Stopped = stopped, Failures = failures.ToArray() };
         foreach (var id in targets)
         {
+            currentId = id; var stage = "Read wallet address";
             log._acc = id.ToString();
             try
             {
-                var address = db.Get("evm", "_addresses", where: $"id = {id}", log: true)?.Trim();
+                var address = db.Get("evm", "_addresses", where: $"id = {id}", log: true, thrw: true)?.Trim();
                 if (string.IsNullOrEmpty(address))
                 {
                     skipped++;
                     continue;
                 }
+                if (chainNames == null) { stage = "Fetch chain metadata"; chainNames = await jumper.GetChainMapping(); }
+                stage = "Fetch wallet balances";
                 var bal = await jumper.GetBalances(address);
+                stage = "Validate balance response";
                 var snapshot = new Dictionary<string, string>(StringComparer.Ordinal);
                 foreach (var chain in bal.Balances)
                 {
@@ -61,6 +74,7 @@ public class TasksDb
                         .GroupBy(t => t.Address, StringComparer.OrdinalIgnoreCase).Select(g => g.First()).ToList();
                     snapshot[chainName] = JsonConvert.SerializeObject(tokens);
                 }
+                stage = "Save balance snapshot";
                 db.ReplaceTreasurySnapshot(id, snapshot);
                 updated++;
                 log.Send($"Balance snapshot saved: {snapshot.Count} chains", "INFO");
@@ -69,11 +83,16 @@ public class TasksDb
             catch (Exception ex)
             {
                 failed++;
-                log.Send($"Balance update failed; previous data kept: {ex.Message}", "ERROR");
+                var failure = BalanceUpdateFailure.Describe(id, stage, ex); failures.Add(failure);
+                stopped = failure.StopsBatch;
+                log.Send($"Balance update failed | stage: {stage} | code: {failure.Code} | {failure.Reason} | details: {failure.Details} | previous balances kept", "ERROR");
             }
-            finally { processed++; progress?.Invoke(new UpdateResult(processed, updated, failed, skipped, id)); }
+            finally { processed++; progress?.Invoke(Report()); }
+            if (stopped) break;
         }
-        return new UpdateResult(processed, updated, failed, skipped, targets.LastOrDefault());
+        var result = Report();
+        if (stopped) log.Send($"Balance update stopped due to a shared dependency failure | updated: {updated} | failed: {failed} | not attempted: {result.Unprocessed}", "ERROR");
+        return result;
     }
 
     public static int[] BalanceUpdateAccounts(int maxId, IReadOnlyCollection<int>? accountIds)
