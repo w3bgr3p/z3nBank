@@ -667,6 +667,11 @@ A: Fees depend on the selected protocol (Relay/LiFi) and current gas prices on t
   Clearing the token selection also clears its account selection and exclusions.
   Selected IDs are highlighted. **Clear accounts** resets this selection, and no selection disables the batch swap.
 - **Swap selected → native** previews the combined contract selection only for selected accounts and networks.
+  Click network headers in Treasury to select swap networks; click again to deselect. Selected headers and
+  columns are highlighted, and the swap scope shows account IDs and networks. With no tokens selected in the
+  sidebar, the action swaps all eligible tokens in that scope; otherwise it swaps only the selected symbols.
+  With no explicit swap network selected, the action uses all networks visible through the current chain filter.
+  Row swap buttons affect only their own account and use the same network scope.
   The server restricts both preview and execution to the selected account IDs.
   DeFi uses the same Treasury heatmap levels: below $1, $1–10, $10–100 and $100+; debt stays marked separately.
 - **Swap token → native** previews the exact contracts, networks and accounts before confirmation.

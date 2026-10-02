@@ -339,11 +339,12 @@ function getSettings() {
 }
 
 
-async function swapAllToNative(accountId) {
+async function swapAllToNative(accountId, button) {
+    const selectedChains = getTreasurySwapChains();
 
     const result = await Swal.fire({
         title: 'Confirm Swap',
-        text: `Start swap-all for account #${accountId}? This will swap all tokens to native token.`,
+        text: `Account #${accountId} · Networks: ${selectedChains.join(', ')}. Swap all eligible tokens to the native token in these networks?`,
         icon: 'warning',
         showCancelButton: true,
         confirmButtonText: 'Yes, swap it!',
@@ -356,9 +357,7 @@ async function swapAllToNative(accountId) {
     if (!result.isConfirmed) return;
 
     const settings = getSettings();
-    const selectedChains = getSelectedChains();
     const chainsParam = selectedChains.length > 0 ? selectedChains.join(',') : '';
-    const button = event.target;
     button.disabled = true;
     button.textContent = '⏳';
 
@@ -514,9 +513,9 @@ function renderHeatmap(data) {
 
     filteredChains.forEach(chain => {
         const labels = { Ethereum: 'ETH', Arbitrum: 'ARB', Base: 'BASE', 'OP Mainnet': 'OP',
-            Polygon: 'POL', Avalanche: 'AVAX', Gnosis: 'GNO', HyperEVM: 'HYPE',
+            Polygon: 'POL', Avalanche: 'AVAX', Gnosis: 'GNO', HyperEVM: 'HYPE', Blast: 'BLAST',
             Unichain: 'UNI', Mantle: 'MNT', zkSync: 'ZK', Linea: 'LINEA', Scroll: 'SCR' };
-        html += `<th title="${chain}"><span class="chain-label">${labels[chain] || chain.slice(0, 4).toUpperCase()}</span></th>`;
+        html += `<th title="${chain}"><button type="button" class="treasury-chain-choice" data-chain="${encodeURIComponent(chain)}" aria-pressed="false" onclick="toggleTreasuryChain(decodeURIComponent(this.dataset.chain))" title="Click to select / deselect this network for swaps"><span class="chain-label">${labels[chain] || chain.slice(0, 4).toUpperCase()}</span></button></th>`;
     });
 
     html += '<th style="background: #1c2128; border-left: 2px solid #30363d;">TOTAL</th>';
@@ -571,7 +570,7 @@ function renderHeatmap(data) {
 
         // ACTION column with swap button
         html += `<td style="background: #0d1117; border-left: 2px solid #30363d; padding: 2px;">
-            <button class="swap-btn" onclick="swapAllToNative(${account.id})" title="Swap all tokens to native">
+            <button class="swap-btn" onclick="swapAllToNative(${account.id}, this)" title="Swap all tokens for account #${account.id} in selected swap networks (or all visible networks)">
                 ⥄
             </button>
         </td>`;

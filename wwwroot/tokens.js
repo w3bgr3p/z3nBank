@@ -1,5 +1,6 @@
 const selectedTokenSymbols = new Set();
 const selectedTreasuryAccounts = new Set();
+const selectedTreasuryChains = new Set();
 const excludedTreasuryAccounts = new Set();
 let tokenSwapPolling = false;
 let tokenSwapPending = false;
@@ -8,9 +9,21 @@ const nativeToken = token => /^0x(?:0{40}|e{40})$/i.test(token.address || '');
 const tokenSymbol = token => (token.symbol || '').trim();
 
 function selectedTokenEntries() {
+    const chains = new Set(getTreasurySwapChains());
     return treasuryData.filter(a => selectedTreasuryAccounts.has(a.id)).flatMap(account => Object.entries(account.chainData || {}).flatMap(([chain, tokens]) =>
-        tokens.filter(token => selectedTokenSymbols.has(tokenSymbol(token))).map(token => ({ account, chain, token }))));
+        chains.has(chain) ? tokens.filter(token => !selectedTokenSymbols.size || selectedTokenSymbols.has(tokenSymbol(token))).map(token => ({ account, chain, token })) : []));
 }
+
+function getTreasurySwapChains() {
+    if (selectedTreasuryChains.size) return [...selectedTreasuryChains];
+    const filtered = getSelectedChains();
+    return filtered.length ? filtered : [...new Set(treasuryData.flatMap(a => Object.keys(a.chainData || {})))];
+}
+function toggleTreasuryChain(chain) {
+    selectedTreasuryChains.has(chain) ? selectedTreasuryChains.delete(chain) : selectedTreasuryChains.add(chain);
+    highlightSelectedToken();
+}
+function clearTreasuryChains() { selectedTreasuryChains.clear(); highlightSelectedToken(); }
 
 function updateTokenChoices(data) {
     const symbols = [...new Set(data.flatMap(a => Object.values(a.chainData || {}).flat().map(tokenSymbol)))].filter(Boolean).sort();
@@ -44,7 +57,12 @@ function clearTreasuryAccounts() {
 }
 
 function highlightSelectedToken() {
+    document.querySelectorAll('.treasury-chain-choice').forEach(button => {
+        const chosen = selectedTreasuryChains.has(decodeURIComponent(button.dataset.chain));
+        button.classList.toggle('selected', chosen); button.setAttribute('aria-pressed', String(chosen));
+    });
     document.querySelectorAll('.heatmap-cell[data-tokens]').forEach(cell => {
+        cell.classList.toggle('swap-chain-selected', selectedTreasuryChains.has(cell.dataset.chain));
         const matches = selectedTokenSymbols.size &&
             JSON.parse(cell.dataset.tokens || '[]').some(t => selectedTokenSymbols.has(tokenSymbol(t)));
         cell.classList.toggle('token-match', Boolean(matches));
@@ -62,8 +80,11 @@ function highlightSelectedToken() {
     document.getElementById('clearTreasuryAccountsButton').disabled = !selectedTreasuryAccounts.size;
     const entries = selectedTokenEntries();
     const wallets = new Set(entries.map(e => e.account.id));
-    document.getElementById('tokenSelectionInfo').textContent = selectedTokenSymbols.size
-        ? `${[...selectedTokenSymbols].join(', ')} · ${wallets.size} accounts · ${entries.length} positions · ${formatUSD(entries.reduce((sum, e) => sum + e.token.valueUSD, 0))}` : 'Select tokens in the right panel';
+    document.getElementById('tokenSelectionInfo').textContent = `${selectedTokenSymbols.size ? [...selectedTokenSymbols].join(', ') : 'All tokens'} · ${wallets.size} accounts · ${entries.length} positions · ${formatUSD(entries.reduce((sum, e) => sum + e.token.valueUSD, 0))}`;
+    const scope = document.getElementById('treasuryChainSelectionInfo');
+    if (scope) scope.textContent = `Swap networks: ${selectedTreasuryChains.size ? [...selectedTreasuryChains].join(', ') : 'all visible'} · Accounts: ${selectedTreasuryAccounts.size ? [...selectedTreasuryAccounts].map(id => '#' + id).join(', ') : 'select account IDs'}`;
+    const clearChains = document.getElementById('clearTreasuryChainsButton'); if (clearChains) clearChains.disabled = !selectedTreasuryChains.size;
+    document.getElementById('swapSelectedTokenButton').textContent = selectedTokenSymbols.size ? 'Swap selected tokens → native' : 'Swap all tokens → native';
     document.getElementById('clearTokenSelectionButton').disabled = !selectedTokenSymbols.size;
     document.getElementById('swapSelectedTokenButton').disabled = tokenSwapPending || tokenSwapPolling || !selectedTreasuryAccounts.size || !entries.some(e => !nativeToken(e.token));
 }
@@ -80,17 +101,19 @@ async function tokenSwapRequest(path, body) {
 
 async function swapSelectedToken() {
     if (tokenSwapPending || tokenSwapPolling) return;
-    if (!selectedTreasuryAccounts.size || !selectedTokenSymbols.size) return;
+    if (!selectedTreasuryAccounts.size) return;
     tokenSwapPending = true;
     const button = document.getElementById('swapSelectedTokenButton');
     button.disabled = true;
     try {
         const symbols = [...selectedTokenSymbols];
+        const excludeStables = !symbols.length && Boolean(document.getElementById('excludeStablesCheckbox')?.checked);
         const assets = [...new Map(selectedTokenEntries().filter(e => !nativeToken(e.token))
             .map(e => [tokenKey(e.token), { chainId: e.token.chainId, address: e.token.address }])).values()];
         const plan = await tokenSwapRequest('preview', {
-            maxId: Number(document.getElementById('maxIdInput').value), chains: getSelectedChains(), assets,
+            maxId: Number(document.getElementById('maxIdInput').value), chains: getTreasurySwapChains(), assets,
             accountIds: [...selectedTreasuryAccounts],
+            excludeStables,
             threshold: Number(document.getElementById('thresholdInput').value),
             protocol: document.getElementById('protocolSelect').value,
             gasBoostPercent: getGasBoostPercent()
@@ -110,9 +133,10 @@ async function swapSelectedToken() {
         const note = document.createElement('p');
         note.textContent = `${plan.accounts} accounts · ${plan.targets.length} positions · estimated ${formatUSD(plan.totalUSD)}. ` +
             `Swap the full live balance to the native token in each network. Gas +${plan.gasBoostPercent}%; slippage up to 3%. ` +
-            'Only the contracts listed below will be swapped. Exclude Stables does not apply to this explicit token selection.';
+            'Only the accounts, networks and contracts listed below will be swapped. ' +
+            (symbols.length ? 'Exclude Stables does not apply to this explicit token selection.' : excludeStables ? 'Stablecoins are excluded.' : 'Stablecoins are included.');
         content.append(note, details);
-        const confirmation = await Swal.fire({ title: `Swap ${symbols.join(', ')} → native`, html: content, width: 850,
+        const confirmation = await Swal.fire({ title: `Swap ${symbols.length ? symbols.join(', ') : 'all tokens'} → native`, html: content, width: 850,
             showCancelButton: true, confirmButtonText: 'Start swap', cancelButtonText: 'Cancel' });
         if (!confirmation.isConfirmed) return;
         const job = await tokenSwapRequest('execute', plan.planId);

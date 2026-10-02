@@ -11,6 +11,7 @@ public partial class TreasuryController
         public List<string> Chains { get; set; } = new();
         public List<TokenSelection.Asset> Assets { get; set; } = new();
         public List<int> AccountIds { get; set; } = new();
+        public bool ExcludeStables { get; set; }
         public decimal Threshold { get; set; }
         public string Protocol { get; set; } = "Relay";
         public decimal GasBoostPercent { get; set; } = GasPricing.DefaultPercent;
@@ -39,7 +40,7 @@ public partial class TreasuryController
             return BadRequest(new { error = "Invalid token selection, account range or protocol" });
         var db = _dbService.GetDb();
         var targets = TokenSelection.Plan(new HeatmapGenerator(db).GetTreasuryData(request.MaxId, request.Chains),
-            request.Assets, request.Threshold, request.AccountIds);
+            request.Assets, request.Threshold, request.AccountIds, request.ExcludeStables);
         lock (TokenSwapLock)
         {
             if (_tokenSwapRunning) return Conflict(new { error = "Token swap is already running" });

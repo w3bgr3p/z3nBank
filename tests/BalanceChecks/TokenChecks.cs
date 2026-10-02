@@ -25,6 +25,9 @@ static class TokenChecks
         check("Plans preserve the wallet bound to each account", plan.Single(t => t.Id == 2).Wallet == "wallet2");
         check("Plans apply minimum value", TokenSelection.Plan(accounts, assets, .1m).Count == 1);
         check("Account selection limits swaps on the server", TokenSelection.Plan(accounts, assets, 0m, [2]).Single().Id == 2);
+        check("Network contract IDs and account whitelist jointly restrict the swap", TokenSelection.Plan(accounts,
+            [new(8453, contract)], 0m, [1]).All(t => t.Id == 1 && t.ChainId == 8453));
+        check("All-token mode honors the stablecoin exclusion on the server", TokenSelection.Plan(accounts, assets, 0m, [1], true).Count == 0);
         check("Empty account whitelist never swaps all accounts", TokenSelection.Plan(accounts, assets, 0m, []).Count == 0);
         check("Unknown selected account does not fall back to another wallet", TokenSelection.Plan(accounts, assets, 0m, [99]).Count == 0);
         check("Native tokens cannot be queued", TokenSelection.Plan(accounts,

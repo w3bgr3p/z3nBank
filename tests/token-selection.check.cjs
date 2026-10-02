@@ -31,7 +31,7 @@ const calls = [];
 const context = vm.createContext({ treasuryData, API_BASE: '/api/treasury', console, setTimeout,
     Option: class {}, formatUSD: value => `$${value}`, getSelectedChains: () => ['Ethereum', 'Base'], getGasBoostPercent: () => 2,
     refreshData: async () => { refreshed++; },
-    document: { getElementById: id => elements[id], querySelectorAll: selector => selector.includes('token-choice') ? choices : selector.includes('treasury-account-id') ? [] : cells,
+    document: { getElementById: id => elements[id], querySelectorAll: selector => selector.includes('token-choice') ? choices : selector.includes('treasury-account-id') || selector.includes('treasury-chain-choice') ? [] : cells,
         createElement: makeElement, addEventListener() {} },
     Swal: { fire: async () => ({ isConfirmed: confirmed }) },
     fetch: async (url, options) => {
@@ -92,5 +92,15 @@ vm.runInContext(fs.readFileSync('wwwroot/tokens.js', 'utf8'), context);
     const restricted = calls.filter(c => c.url.endsWith('/preview')).at(-1).body;
     assert.deepEqual(restricted.accountIds, [1], 'Exclusions restrict the actual server preview');
     assert.deepEqual(restricted.assets, [{ chainId: 1, address }]);
+    vm.runInContext("clearTreasuryTokens(); toggleTreasuryAccount(1); toggleTreasuryChain('Ethereum')", context);
+    assert(!elements.swapSelectedTokenButton.disabled, 'Account plus chain selection enables swapping all tokens without picking a symbol');
+    assert(elements.swapSelectedTokenButton.textContent.includes('all tokens'));
+    await vm.runInContext('swapSelectedToken()', context);
+    const networkOnly = calls.filter(c => c.url.endsWith('/preview')).at(-1).body;
+    assert.deepEqual(networkOnly.accountIds, [1]);
+    assert.deepEqual(networkOnly.chains, ['Ethereum']);
+    assert.deepEqual(networkOnly.assets, [{ chainId: 1, address }], 'All-token mode still excludes native and other accounts/networks');
+    vm.runInContext("toggleTreasuryChain('Ethereum')", context);
+    assert.equal(vm.runInContext('selectedTreasuryChains.size', context), 0, 'Second network click removes selection');
     console.log('PASS: highlighting, exact contract selection, cancellation, confirmed execution, progress and native exclusion');
 })().catch(error => { console.error(error); process.exitCode = 1; });

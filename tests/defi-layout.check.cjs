@@ -22,8 +22,10 @@ const status = { positions: [base, { ...base, id: 'p2', chain: 'arb', valueUsd: 
             if (url.origin !== origin) return route.abort();
             if (url.pathname === '/' || url.pathname === '/index.html') return route.fulfill({ path: path.resolve('wwwroot/index.html'), contentType: 'text/html' });
             if (url.pathname === '/defi.js') return route.fulfill({ path: path.resolve('wwwroot/defi.js'), contentType: 'text/javascript' });
-            if (url.pathname === '/tokens.js' || url.pathname === '/app.js') return route.fulfill({ path: path.resolve('wwwroot' + url.pathname), contentType: 'text/javascript' });
+            if (['/tokens.js', '/app.js', '/gas.js', '/ui-components.js', '/passwords.js', '/logs.js'].includes(url.pathname)) return route.fulfill({ path: path.resolve('wwwroot' + url.pathname), contentType: 'text/javascript' });
             if (url.pathname === '/css/bank.css') return route.fulfill({ path: path.resolve('wwwroot/css/bank.css'), contentType: 'text/css' });
+            if (url.pathname === '/styles.css' || url.pathname === '/css/themes.css') return route.fulfill({ path: path.resolve('wwwroot' + url.pathname), contentType: 'text/css' });
+            if (url.pathname === '/design.js') return route.fulfill({ path: path.resolve('wwwroot/design.js'), contentType: 'text/javascript' });
             if (url.pathname === '/api/Treasury/defi/status') return route.fulfill({ json: status });
             if (url.pathname === '/api/Treasury/defi/withdraw/preview') return route.fulfill({ json: { planId: 'read-only-test', quote: {
                 amountRaw: '1161942500000000', decimals: 18, symbol: 'WETH', valueUsd: 3.1573, feeUsd: .0005249, l1FeeUsd: .00000155 } } });
@@ -37,7 +39,8 @@ const status = { positions: [base, { ...base, id: 'p2', chain: 'arb', valueUsd: 
         await page.goto(origin, { waitUntil: 'domcontentloaded' });
         await page.locator('#loadingOverlay').evaluate(e => e.style.display = 'none');
         await page.locator('#defiToggle').click();
-        await page.locator('#defiGridBody tr').first().waitFor();
+        try { await page.locator('#defiGridBody tr').first().waitFor(); }
+        catch (error) { throw new Error(`${error.message}\nPage errors: ${failures.join(' | ')}\nDeFi status: ${await page.locator('#defiStatus').textContent()}`); }
         assert.equal(await page.locator('#defiGridBody tr').count(), 3);
         assert.equal(await page.locator('#defiResults').count(), 0, 'DeFi uses the shared log drawer instead of a separate results panel');
         const sidebar = await page.locator('.defi-sidebar').boundingBox(), grid = await page.locator('.defi-grid-wrap').boundingBox();
@@ -127,6 +130,30 @@ const status = { positions: [base, { ...base, id: 'p2', chain: 'arb', valueUsd: 
         assert.equal(await page.locator('.heatmap-cell.token-muted').count(), 0);
         await page.locator('.treasury-account-id[data-account-id="2"]').click();
         assert.equal(await page.locator('.treasury-account-id.selected').count(), 1);
+        let swapScope;
+        await page.route('**/api/treasury/token-swap/preview', async route => {
+            swapScope = route.request().postDataJSON();
+            return route.fulfill({ json: { planId: 'test', targets: [], accounts: 0 } });
+        });
+        await page.evaluate(() => {
+            clearTreasuryTokens(); clearTreasuryChains();
+            const token = (chainId, address) => ({ symbol: 'Q', chainId, address, valueUSD: 2 });
+            treasuryData = [1, 2].map(id => ({ id, address: '0x' + String(id).repeat(40), chainData: {
+                Blast: [token(81457, '0x' + '2'.repeat(40))], Ethereum: [token(1, '0x' + '3'.repeat(40))] } }));
+            renderHeatmap(treasuryData);
+            window.Swal = { fire: async () => ({ isConfirmed: false }) };
+        });
+        await page.locator('.treasury-account-id[data-account-id="1"]').click();
+        await page.locator('.treasury-chain-choice[data-chain="Blast"]').click();
+        assert.equal(await page.locator('.treasury-chain-choice.selected').count(), 1);
+        assert((await page.locator('#treasuryChainSelectionInfo').innerText()).includes('Blast') && (await page.locator('#treasuryChainSelectionInfo').innerText()).includes('#1'));
+        assert((await page.locator('#swapSelectedTokenButton').innerText()).includes('all tokens'));
+        await page.locator('#swapSelectedTokenButton').click();
+        await page.waitForFunction(() => !tokenSwapPending);
+        assert.deepEqual(swapScope.accountIds, [1]); assert.deepEqual(swapScope.chains, ['Blast']);
+        assert(swapScope.assets.every(a => a.chainId === 81457));
+        await page.locator('.treasury-chain-choice[data-chain="Blast"]').click();
+        assert.equal(await page.locator('.treasury-chain-choice.selected').count(), 0);
         assert.equal(failures.filter(e => /defi/i.test(e)).length, 0, failures.join('\n'));
         console.log('PASS: real-browser tab layout, chain details, batch selection, log drawer and Treasury return; no transactions');
     } finally { await browser.close(); }

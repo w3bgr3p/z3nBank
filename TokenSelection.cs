@@ -11,12 +11,12 @@ public static class TokenSelection
     public sealed record Target(int Id, string Wallet, string Chain, int ChainId, string Address, string Symbol, decimal ValueUSD);
 
     public static List<Target> Plan(IEnumerable<HeatmapGenerator.AccountData> accounts,
-        IEnumerable<Asset> assets, decimal threshold, IEnumerable<int>? accountIds = null)
+        IEnumerable<Asset> assets, decimal threshold, IEnumerable<int>? accountIds = null, bool excludeStables = false)
     {
         var keys = assets.Select(a => Key(a.ChainId, a.Address)).ToHashSet();
         var selected = accountIds?.ToHashSet();
         return accounts.Where(a => selected == null || selected.Contains(a.Id)).SelectMany(account => account.ChainData.SelectMany(chain => chain.Value
-            .Where(t => !IsNative(t.Address) && t.ValueUSD > threshold && keys.Contains(Key(t.ChainId, t.Address)))
+            .Where(t => !IsNative(t.Address) && (!excludeStables || !BalanceMath.IsStable(t.PriceUSD)) && t.ValueUSD > threshold && keys.Contains(Key(t.ChainId, t.Address)))
             .Select(t => new Target(account.Id, account.Address, chain.Key, t.ChainId, t.Address, t.Symbol, t.ValueUSD))))
             .DistinctBy(t => (t.Id, Key(t.ChainId, t.Address))).ToList();
     }
