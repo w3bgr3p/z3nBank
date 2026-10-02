@@ -1,8 +1,12 @@
+let swapBalanceRevision = null;
 async function refreshSwapOperations() {
     try {
         const response = await fetch(`${API_BASE}/swaps/status`, { cache: 'no-store' });
         if (!response.ok) return;
         const status = await response.json();
+        const changed = swapBalanceRevision !== null && status.balanceRevision !== swapBalanceRevision;
+        swapBalanceRevision = status.balanceRevision;
+        if (changed) await refreshData();
         document.getElementById('stopSwapsButton').disabled = status.active === 0 || status.stopping;
         document.getElementById('swapOperationsStatus').textContent = status.active
             ? `${status.stopping ? 'Stopping' : 'Running'}: ${status.active} swap operations` : '';

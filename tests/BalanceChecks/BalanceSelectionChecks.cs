@@ -27,12 +27,12 @@ internal static class BalanceSelectionChecks
             db.Query("CREATE TABLE _treasury (id INTEGER PRIMARY KEY, Ethereum TEXT)", thrw: true);
             for (var id = 1; id <= 3; id++) {
                 db.Query($"INSERT INTO _addresses VALUES ({id}, '0x1111111111111111111111111111111111111111')", thrw: true);
-                db.ReplaceTreasurySnapshot(id, new Dictionary<string, string> { ["Ethereum"] = "saved" });
+                db.ReplaceTreasurySnapshot(id, new Dictionary<string, string> { ["Ethereum"] = " [] " });
             }
             var handler = new Handler(); using var http = new HttpClient(handler); using var client = new Jumper(http);
             var result = await TasksDb.UpdateDb(db, 4, client: client, log: new Logger(false, http: false), accountIds: [3, 3]);
             check("Selected account alone is fetched and saved; duplicate selection runs once", handler.Calls == 1 && result.Processed == 1 && result.CurrentId == 3 && result.Updated == 1);
-            check("Unselected balance snapshots remain unchanged", db.Get("Ethereum", "_treasury", id: 1) == "saved" && db.Get("Ethereum", "_treasury", id: 2) == "saved" && db.Get("Ethereum", "_treasury", id: 3) == "[]");
+            check("Unselected balance snapshots remain unchanged", db.Get("Ethereum", "_treasury", id: 1) == " [] " && db.Get("Ethereum", "_treasury", id: 2) == " [] " && db.Get("Ethereum", "_treasury", id: 3) == "[]");
             result = await TasksDb.UpdateDb(db, 4, client: client, log: new Logger(false, http: false), accountIds: [4]);
             check("Missing selected account does not fall back to all accounts", handler.Calls == 1 && result.Skipped == 1 && result.Updated == 0);
             result = await TasksDb.UpdateDb(db, 3, client: client, log: new Logger(false, http: false), accountIds: []);

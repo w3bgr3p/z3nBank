@@ -65,19 +65,40 @@ public class TasksDb
                 stage = "Fetch wallet balances";
                 var bal = await jumper.GetBalances(address);
                 stage = "Validate balance response";
+                // Indexers can omit a chain after a swap. Keep checking contracts already known to the wallet.
+                stage = "Read saved balance snapshot";
+                foreach (var column in db.GetTableColumns("_treasury").Where(c => !c.Equals("id", StringComparison.OrdinalIgnoreCase)))
+                {
+                    var metadata = chainNames.FirstOrDefault(c => c.Value == column);
+                    if (metadata.Key == 0 || bal.Balances.ContainsKey(metadata.Key.ToString())) continue;
+                    var previous = db.Get(column, "_treasury", id: id, log: true, thrw: true);
+                    if (!string.IsNullOrWhiteSpace(previous)) bal.Balances[metadata.Key.ToString()] =
+                        JsonConvert.DeserializeObject<List<Jumper.TokenInfo>>(previous) ?? [];
+                }
                 var snapshot = new Dictionary<string, string>(StringComparer.Ordinal);
                 foreach (var chain in bal.Balances)
                 {
                     if (!int.TryParse(chain.Key, out var chainId) || !chainNames.TryGetValue(chainId, out var chainName))
                         throw new InvalidDataException($"No EVM metadata for returned chain {chain.Key}; keeping previous snapshot.");
-                    var tokens = chain.Value.Where(t => t.ValueUSD > minValue)
-                        .GroupBy(t => t.Address, StringComparer.OrdinalIgnoreCase).Select(g => g.First()).ToList();
+                    stage = "Read saved balance snapshot";
+                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+                    var known = new List<Jumper.TokenInfo>(chain.Value);
+                    if (db.GetTableColumns("_treasury").Contains(chainName, StringComparer.Ordinal))
+                    {
+                        var saved = db.Get(chainName, "_treasury", id: id, log: true, thrw: true);
+                        if (!string.IsNullOrWhiteSpace(saved)) known.AddRange(JsonConvert.DeserializeObject<List<Jumper.TokenInfo>>(saved) ?? []);
+                    }
+                    stage = $"Verify RPC balances ({chainName})";
+                    var verified = known.Count == 0 ? new List<Jumper.TokenInfo>() :
+                        await TreasuryRpcBalances.Read(new Nethereum.Web3.Web3(Rpc.Get(chainName)), chainId, address, known,
+                            cancellation: timeout.Token);
+                    var tokens = verified.Where(t => t.ValueUSD > minValue).ToList();
                     snapshot[chainName] = JsonConvert.SerializeObject(tokens);
                 }
                 stage = "Save balance snapshot";
                 db.ReplaceTreasurySnapshot(id, snapshot);
                 updated++;
-                log.Send($"Balance snapshot saved: {snapshot.Count} chains", "INFO");
+                log.Send($"Balance snapshot saved: {snapshot.Count} chains | amounts: RPC | prices/discovery: LI.FI", "INFO");
                 await Task.Delay(250);
             }
             catch (Exception ex)

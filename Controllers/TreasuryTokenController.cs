@@ -112,19 +112,7 @@ public partial class TreasuryController
                         clientType: plan.Protocol, chains: string.Join(",", group.Select(t => t.Chain).Distinct()),
                         log: new Logger(true, acc: group.Key.ToString()), tokenTargets: keys,
                         expectedWallet: group.First().Wallet);
-                    if (result.Succeeded > 0)
-                    {
-                        try
-                        {
-                            using var jumper = new Jumper();
-                            var names = await SwapExecution.Read(jumper.GetChainMapping());
-                            var balances = await SwapExecution.Read(jumper.GetBalances(group.First().Wallet));
-                            var snapshot = balances.Balances.ToDictionary(c => names[int.Parse(c.Key)],
-                                c => Newtonsoft.Json.JsonConvert.SerializeObject(c.Value));
-                            plan.Database.ReplaceTreasurySnapshot(group.Key, snapshot);
-                        }
-                        catch (Exception ex) when (ex is not OperationCanceledException) { refreshError = ex.Message; }
-                    }
+                    refreshError = result.RefreshError;
                 }
                 catch (ReceiptUnavailableException ex)
                 {

@@ -28,6 +28,7 @@ public partial class TreasuryController
     public IActionResult ActiveSwaps()
     {
         lock (TokenSwapLock) return Ok(new { active = SwapOperations.Count,
+            balanceRevision = TreasuryRpcBalances.Revision,
             stopping = SwapOperations.Values.Any(s => s.IsCancellationRequested) });
     }
 

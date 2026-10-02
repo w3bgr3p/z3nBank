@@ -2,7 +2,7 @@ namespace z3n;
 
 public partial class Db
 {
-    public void ReplaceTreasurySnapshot(int id, IReadOnlyDictionary<string, string> balances)
+    public void ReplaceTreasurySnapshot(int id, IReadOnlyDictionary<string, string> balances, bool complete = true)
     {
         if (id <= 0) throw new ArgumentOutOfRangeException(nameof(id));
         var columns = GetTableColumns("_treasury");
@@ -14,7 +14,7 @@ public partial class Db
                 columns.Add(name);
             }
         }
-        columns = columns.Where(c => !c.Equals("id", StringComparison.OrdinalIgnoreCase)).ToList();
+        columns = columns.Where(c => !c.Equals("id", StringComparison.OrdinalIgnoreCase) && (complete || balances.ContainsKey(c))).ToList();
         if (columns.Count == 0) return;
         using var sql = _dbMode == dbMode.Postgre
             ? new Sql($"Host={_pgHost};Port={_pgPort};Database={_pgDbName};Username={_pgUser};Password={_pgPass};Pooling=true;")

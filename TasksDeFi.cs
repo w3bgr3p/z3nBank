@@ -225,7 +225,10 @@ public class DeFi
     /// <summary>
     /// Обменивает все токены на нативную валюту в каждой сети
     /// </summary>
-    public sealed record SwapResult(int Succeeded, int Failed, string? Error = null);
+    public sealed record SwapResult(int Succeeded, int Failed, string? Error = null)
+    {
+        public string? RefreshError { get; init; }
+    }
 
     public static async Task<SwapResult> SwapAllTokensNative(Db db, int id, decimal minValue, string pin,
         bool excludeStables = false, Protocol clientType = Protocol.LiFi, int delayMs = 108,
@@ -234,6 +237,7 @@ public class DeFi
     {
         int successCount = 0;
         int failCount = 0;
+        var refreshErrors = new List<string>();
         
         try
         {
@@ -350,6 +354,18 @@ public class DeFi
                         {
                             successCount++;
                             log?.Send($"✅ {opInfo} | TX: {result.TxHash} | {result.Details}", "SUCCESS");
+                            try
+                            {
+                                await TreasuryRpcBalances.RefreshAfterSwap(db, id, chainName, chainIdInt,
+                                    account.Address, web3, chain.Value, quote, result.TxHash ?? "");
+                                log?.Send($"Balance refreshed from RPC | account #{id} | {chainName} | native and token amounts saved", "SUCCESS");
+                            }
+                            catch (Exception refreshException)
+                            {
+                                var message = $"{chainName}: {SwapExecution.ErrorDetails(refreshException)}";
+                                refreshErrors.Add(message);
+                                log?.Send($"Swap confirmed, but RPC balance refresh failed | account #{id} | {message} | previous snapshot kept", "ERROR");
+                            }
                         }
                         else
                         {
@@ -366,12 +382,12 @@ public class DeFi
             }
             
             log?.Send($"🏁 Done | Total: {successCount + failCount} | Success: {successCount} | Fail: {failCount}");
-            return new SwapResult(successCount, failCount);
+            return new SwapResult(successCount, failCount) { RefreshError = refreshErrors.Count == 0 ? null : string.Join("; ", refreshErrors) };
         }
         catch (Exception ex) when (ex is not OperationCanceledException && ex is not ReceiptUnavailableException)
         {
             log?.Send($"🚨 Critical: {ex.Message}", "CRITICAL");
-            return new SwapResult(successCount, failCount, ex.Message);
+            return new SwapResult(successCount, failCount, ex.Message) { RefreshError = refreshErrors.Count == 0 ? null : string.Join("; ", refreshErrors) };
         }
     }
 
