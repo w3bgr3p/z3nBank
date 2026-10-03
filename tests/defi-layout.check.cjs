@@ -71,6 +71,9 @@ const status = { positions: [base, { ...base, id: 'p2', chain: 'arb', valueUsd: 
         await page.locator('#defiGridBody tr').first().locator('.defi-heat').nth(1).click();
         assert.equal(await page.locator('#defiRows tr').count(), 1);
         assert(await page.locator('#defiDetail').isVisible());
+        status.running = true;
+        await page.waitForFunction(() => document.getElementById('defiDetailBlocked').textContent.includes('This account is ready'));
+        assert(await page.locator('#defiRows button').first().isEnabled(), 'Scanned account stays usable while other accounts scan');
         const detailsBounds = await page.locator('#defiDetail').boundingBox();
         assert(Math.abs(detailsBounds.x + detailsBounds.width / 2 - 800) < 10 && Math.abs(detailsBounds.y + detailsBounds.height / 2 - 450) < 10, 'Position operations dialog is centered in both axes');
         await page.locator('#defiRows button').first().click();
@@ -91,6 +94,8 @@ const status = { positions: [base, { ...base, id: 'p2', chain: 'arb', valueUsd: 
         assert.equal(executionRequests, 1);
         await page.locator('#defiPreviewCancel').click();
         await page.locator('#defiClose').click();
+        status.running = false;
+        await page.waitForFunction(() => !document.getElementById('defiStatus').textContent.startsWith('Scanning'));
         await page.locator('#defiProtocol').selectOption('Test Vault');
         await page.locator('#defiAccounts').fill('1-2'); await page.locator('#defiSelectRange').click();
         assert.equal(await page.locator('#defiGridBody .account-id-button.selected').count(), 2);

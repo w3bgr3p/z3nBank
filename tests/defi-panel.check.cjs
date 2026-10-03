@@ -1,11 +1,11 @@
 const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm');
 const elements = new Map(), events = new WeakMap();
-const make = () => ({ children: [], style: {}, value: '', hidden: false, open: false, disabled: false, textContent: '',
+const make = (tag = '') => ({ tagName: tag.toUpperCase(), children: [], style: {}, value: '', hidden: false, open: false, disabled: false, textContent: '',
     append(...items) { this.children.push(...items); }, replaceChildren(...items) { this.children = items; },
     setAttribute() {}, addEventListener(name, fn, options) {
         if (!events.has(this)) events.set(this, []); events.get(this).push({ name, fn, once: options?.once });
     },
-    querySelectorAll() { const all = e => e.children.flatMap(c => [c, ...all(c)]); return all(this).filter(e => e.onclick); },
+    querySelectorAll(selector) { const all = e => e.children.flatMap(c => [c, ...all(c)]); return all(this).filter(e => selector === 'button' ? e.tagName === 'BUTTON' : e.onclick); },
     showModal() { this.open = true; }, close() {
         if (!this.open) return; this.open = false;
         const listeners = events.get(this) || []; events.set(this, listeners.filter(e => !e.once));
@@ -67,11 +67,20 @@ async function singlePreview(accept = false) {
     assert.equal(el('defiRows').children[1].children[6].children.length, 0, 'Loan cannot start a withdrawal');
     current.running = true; current.processed = 77; current.total = 100;
     context.window.setDefiOpen(true); await flush();
-    assert(detailButton().disabled && !el('defiDetailBlocked').hidden);
-    assert(el('defiDetailBlocked').textContent.includes('77/100') && detailButton().title.includes('Stop scan'));
+    assert(!detailButton().disabled && !el('defiDetailBlocked').hidden);
+    assert(el('defiDetailBlocked').textContent.includes('77/100') && el('defiDetailBlocked').textContent.includes('This account is ready'));
+    current.accounts[0].status = 'pending'; context.window.setDefiOpen(true); await flush();
+    assert(detailButton().disabled && detailButton().title.includes('has not finished scanning'));
+    current.accounts[0].status = 'scanned';
     current.running = false; current.needsRescan = true;
     context.window.setDefiOpen(true); await flush();
-    assert(detailButton().disabled && el('defiDetailBlocked').textContent.includes('Scan accounts again'));
+    assert(detailButton().disabled && el('defiDetailBlocked').textContent.includes('Scan this account again'));
+    current.accounts[1].status = 'stale'; current.requiresFullRescan = false;
+    context.window.setDefiOpen(true); await flush();
+    assert(!detailButton().disabled, 'A transaction on another account does not block this scanned account');
+    current.accounts[0].status = 'stale'; context.window.setDefiOpen(true); await flush();
+    assert(detailButton().disabled, 'Changed account cannot reuse its stale positions');
+    current.accounts[0].status = 'scanned'; current.accounts[1].status = 'pending';
     current.needsRescan = false;
     context.window.setDefiOpen(true); await flush();
     assert(!detailButton().disabled && el('defiDetailBlocked').hidden && !detailButton().title);

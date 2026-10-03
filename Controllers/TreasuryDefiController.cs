@@ -24,6 +24,15 @@ public partial class TreasuryController
     private static DateTimeOffset? _defiUpdated;
     private static bool _defiCancelled;
     private static bool _defiNeedsRescan;
+    private static bool HasStaleDefiAccounts => DefiAccounts.Values.Any(a => a.Status == "stale");
+    private static bool DefiAccountReady(int id) => !_defiNeedsRescan &&
+        DefiAccounts.TryGetValue(id, out var account) && account.Status == "scanned";
+    private static void InvalidateDefiAccount(int id)
+    {
+        if (DefiAccounts.TryGetValue(id, out var account)) DefiAccounts[id] = account with { Status = "stale" };
+        else _defiNeedsRescan = true;
+        PersistDefiSnapshot();
+    }
     private sealed record ExitPlan(Guid Id, DefiPosition Position, DefiVault.Quote Quote, Db Database,
         decimal GasPercent, DateTimeOffset Expires);
     private static ExitPlan? _defiExit;
@@ -48,7 +57,7 @@ public partial class TreasuryController
         lock (DefiLock) return Ok(new { running = _defiScan != null, processed = _defiDone, total = _defiTotal,
             cancelled = _defiCancelled, updatedAt = _defiUpdated, positions = DefiRows.ToArray(), errors = DefiErrors.ToArray(),
             accounts = DefiAccounts.Values.OrderBy(a => a.Id).ToArray(),
-            needsRescan = _defiNeedsRescan,
+            needsRescan = _defiNeedsRescan || HasStaleDefiAccounts, requiresFullRescan = _defiNeedsRescan,
             preparing = _defiPrepare != null, prepareDone = _defiPrepareDone, prepareTotal = _defiPrepareTotal,
             batchTotal = _defiBatchTotal, batchAccount = _defiBatchAccount, batchResults = DefiBatchResults.ToArray(),
             exitRunning = _defiExitRunning, exitResult = _defiExitResult, provider = "Rabby (DeBank data)" });
@@ -128,8 +137,8 @@ public partial class TreasuryController
         DefiPosition? position; var db = _dbService.GetDb(); int version;
         lock (DefiLock)
         {
-            if (_defiScan != null || _defiPrepare != null || _defiExitRunning) return Conflict(new { error = "DeFi operation is already running" });
-            if (_defiNeedsRescan) return Conflict(new { error = "Positions changed after a broadcast. Scan DeFi again before another withdrawal." });
+            if (_defiPrepare != null || _defiExitRunning) return Conflict(new { error = "DeFi operation is already running" });
+            if (!DefiAccountReady(request.AccountId)) return Conflict(new { error = "This account is not scanned or its positions changed. Scan this account before checking a withdrawal." });
             position = DefiRows.FirstOrDefault(p => p.AccountId == request.AccountId && p.Id == request.PositionId);
             version = _defiVersion;
             if (db != _defiDb) position = null;
@@ -152,7 +161,7 @@ public partial class TreasuryController
             }, request.GasBoostPercent);
             lock (DefiLock)
             {
-                if (_defiVersion != version || _defiNeedsRescan || _defiScan != null || _defiPrepare != null || _defiExitRunning || _defiDb != db || db != _dbService.GetDb())
+                if (_defiVersion != version || !DefiAccountReady(request.AccountId) || _defiPrepare != null || _defiExitRunning || _defiDb != db || db != _dbService.GetDb())
                     return Conflict(new { error = "Positions changed; preview again" });
                 _defiExit = new ExitPlan(Guid.NewGuid(), position, quote!, db, request.GasBoostPercent, DateTimeOffset.UtcNow.AddMinutes(2));
                 previewLog.Send($"DeFi preview ready | {position.Protocol} | {position.Chain} | output ${quote!.ValueUsd:0.########} | fee ${quote.FeeUsd:0.########}", "SUCCESS");
@@ -174,10 +183,10 @@ public partial class TreasuryController
         {
             lock (TokenSwapLock)
             {
-                if (_defiScan != null || _defiPrepare != null || _defiExitRunning || SwapOperations.Count > 0 || _defiBlockingBridges > 0)
+                if (_defiPrepare != null || _defiExitRunning || SwapOperations.Count > 0 || _defiBlockingBridges > 0)
                     return Reject("Wait for the active operation to finish", 409);
                 var plan = _defiExit;
-                if (plan == null || _defiNeedsRescan || plan.Id != planId || plan.Expires < DateTimeOffset.UtcNow || plan.Database != _dbService.GetDb())
+                if (plan == null || !DefiAccountReady(plan.Position.AccountId) || plan.Id != planId || plan.Expires < DateTimeOffset.UtcNow || plan.Database != _dbService.GetDb())
                     return Reject("Withdrawal preview expired; preview again");
                 if (string.IsNullOrEmpty(_pin)) return Reject("Set wallet PIN first");
                 var pin = _pin; _defiExit = null; _defiExitRunning = true; _defiExitResult = null;

@@ -77,12 +77,15 @@
         const item = document.createElement(tag); item.textContent = String(value); row.append(item); return item;
     }
     const active = () => busy || state?.running || state?.preparing || state?.exitRunning;
-    function withdrawalBlockReason() {
-        if (state?.running) return `Withdrawal checks are paused while scanning: ${state.processed}/${state.total} accounts. Wait for the scan to finish or use Stop scan / check.`;
+    function withdrawalBlockReason(accountId = detail?.accountId) {
         if (state?.preparing) return `Withdrawal checks are paused while another check is running: ${state.prepareDone || 0}/${state.prepareTotal || 0}.`;
         if (state?.exitRunning) return 'Withdrawal checks are paused while a withdrawal is running. Wait for it to finish.';
         if (busy) return 'Withdrawal check or confirmation is in progress. Finish or cancel it first.';
-        if (state?.needsRescan) return 'Positions may have changed after a transaction. Scan accounts again before checking another withdrawal.';
+        const accounts = state?.accounts || [], account = accounts.find(a => a.id === accountId);
+        const fullRescan = state?.requiresFullRescan ?? (state?.needsRescan && !accounts.some(a => a.status === 'stale'));
+        if (fullRescan || account?.status === 'stale') return 'Positions may have changed after a transaction. Scan this account again before checking another withdrawal.';
+        if (account?.status === 'error') return 'Scanning this account failed. Scan it again before checking a withdrawal.';
+        if (account?.status !== 'scanned') return `This account has not finished scanning. Overall progress: ${state?.processed || 0}/${state?.total || 0}. Already scanned accounts can be used immediately.`;
         return '';
     }
     function buttons() {
@@ -92,7 +95,8 @@
         el('defiBatch').title = protocolsSelected.size > 1 ? 'Choose one protocol for a batch withdrawal' : '';
         el('defiSelected').textContent = `${selected.size} selected`;
         const reason = withdrawalBlockReason();
-        el('defiDetailBlocked').textContent = reason; el('defiDetailBlocked').hidden = !reason;
+        el('defiDetailBlocked').textContent = reason || (state?.running ? `Scan continues: ${state.processed}/${state.total} accounts. This account is ready; withdrawal checks are available.` : '');
+        el('defiDetailBlocked').hidden = !el('defiDetailBlocked').textContent;
         el('defiRows').querySelectorAll('button').forEach(b => { b.disabled = !!reason; b.title = reason; });
     }
     function accounts() {
@@ -180,7 +184,7 @@
         el('defiSummary').textContent = `Net est. USD: ${rows.length ? amountLabel(rows) : '$0.00'} · ${new Set(rows.map(p => p.protocol)).size} protocols · ${new Set(rows.map(p => p.chain)).size} chains · ${new Set(rows.map(p => p.accountId)).size} accounts`;
     }
     function showDetails(accountId, chain) {
-        message = ''; detail = { accountId, chain }; renderDetails(); if (!modal.open) modal.showModal();
+        message = ''; detail = { accountId, chain }; renderDetails(); buttons(); if (!modal.open) modal.showModal();
     }
     function renderDetails() {
         el('defiDetailTitle').textContent = `Account #${detail.accountId}${detail.chain ? ' · ' + detail.chain : ''}${el('defiProtocol').value ? ' · ' + el('defiProtocol').value : ''}`;
@@ -193,7 +197,7 @@
             row.title = `Wallet: ${p.wallet}\nContract: ${p.vaultAddress || 'unknown'}\nGroup: ${p.groupId}`;
             const action = cell(row, '');
             if (!p.withdrawalReason && ['deposit', 'staked', 'locked', 'reward'].includes(p.type) && /^0x[\da-f]{40}$/i.test(p.vaultAddress || '') && /^0x[\da-f]{40}$/i.test(p.assetAddress || '')) {
-                const button = document.createElement('button'); button.textContent = p.type === 'reward' ? p.protocol === 'LayerBank' ? 'Check unlocked rewards' : 'Check claim' : 'Check withdrawal'; button.title = withdrawalBlockReason(); button.disabled = !!button.title;
+                const button = document.createElement('button'); button.textContent = p.type === 'reward' ? p.protocol === 'LayerBank' ? 'Check unlocked rewards' : 'Check claim' : 'Check withdrawal'; button.title = withdrawalBlockReason(p.accountId); button.disabled = !!button.title;
                 button.onclick = () => withdraw(p); action.append(button);
             } else {
                 action.textContent = 'Unavailable · details'; action.title = p.withdrawalReason || 'No automatic adapter for this position';

@@ -32,7 +32,7 @@ public partial class TreasuryController
         lock (DefiLock)
         {
             if (_defiScan != null || _defiPrepare != null || _defiExitRunning) return Conflict(new { error = "A DeFi operation is already running" });
-            if (_defiDb != db || _defiNeedsRescan) return Conflict(new { error = "Scan current DeFi positions first" });
+            if (_defiDb != db || _defiNeedsRescan || HasStaleDefiAccounts) return Conflict(new { error = "Scan current DeFi positions first" });
             selected = DefiBatch.Select(DefiRows, request.Protocol, request.AccountIds);
             if (selected.Count is < 1 or > 200) return BadRequest(new { error = "Choose a batch containing 1–200 protocol positions" });
             version = _defiVersion; _defiPrepare = source; _defiPrepareDone = 0; _defiPrepareTotal = selected.Count;
@@ -71,7 +71,7 @@ public partial class TreasuryController
             }
             lock (DefiLock)
             {
-                if (_defiVersion != version || _defiDb != db || !_dbService.IsConnected || _dbService.GetDb() != db || _defiNeedsRescan)
+                if (_defiVersion != version || _defiDb != db || !_dbService.IsConnected || _dbService.GetDb() != db || _defiNeedsRescan || HasStaleDefiAccounts)
                     return Conflict(new { error = "Positions changed; preview again" });
                 _defiBatchPlan = new DefiBatchPlan(Guid.NewGuid(), targets, db, version, DateTimeOffset.UtcNow.AddMinutes(10));
                 batchLog.Send($"DeFi batch check finished | {targets.Count} ready | {skipped.Count} skipped");
@@ -99,7 +99,7 @@ public partial class TreasuryController
             if (_defiScan != null || _defiPrepare != null || _defiExitRunning || SwapOperations.Count > 0 || _defiBlockingBridges > 0)
                 return Reject("Wait for the active operation to finish", 409);
             if (plan == null || plan.Id != planId || plan.Expires < DateTimeOffset.UtcNow || plan.Version != _defiVersion ||
-                plan.Database != _dbService.GetDb() || _defiNeedsRescan || plan.Targets.Count == 0)
+                plan.Database != _dbService.GetDb() || _defiNeedsRescan || HasStaleDefiAccounts || plan.Targets.Count == 0)
                 return Reject("Batch preview is empty or expired; preview again");
             if (string.IsNullOrEmpty(_pin)) return Reject("Set wallet PIN first");
             var pin = _pin; _defiBatchPlan = null; _defiExit = null; _defiExitRunning = true;
@@ -169,7 +169,7 @@ public partial class TreasuryController
             var approvalWei = System.Numerics.BigInteger.Parse(quote.Approval.Gas) * System.Numerics.BigInteger.Parse(quote.Approval.GasPrice);
             var approvalBudget = quote.FeeUsd * (decimal)approvalWei /
                 (decimal)(System.Numerics.BigInteger.Parse(quote.Gas) * System.Numerics.BigInteger.Parse(quote.GasPrice) + approvalWei);
-            SwapExecution.Check(); lock (DefiLock) { _defiNeedsRescan = true; PersistDefiSnapshot(); }
+            SwapExecution.Check(); lock (DefiLock) InvalidateDefiAccount(p.AccountId);
             var approval = quote.Approval;
             var approvalHash = await TransactionBroadcast.SendAsync(web3, new Nethereum.RPC.Eth.DTOs.TransactionInput {
                 From = p.Wallet, To = approval.Destination, Data = approval.Data, Value = new Nethereum.Hex.HexTypes.HexBigInteger(0),
@@ -193,7 +193,7 @@ public partial class TreasuryController
             { throw new InvalidOperationException($"LP approval confirmed: {approvalHash}. Withdrawal stopped; LP remains in wallet. " + SwapExecution.ErrorDetails(ex), ex); }
         }
         SwapExecution.Check();
-        lock (DefiLock) { _defiNeedsRescan = true; PersistDefiSnapshot(); }
+        lock (DefiLock) InvalidateDefiAccount(p.AccountId);
         var hash = await TransactionBroadcast.SendAsync(web3, DefiVault.Transaction(quote, p.VaultAddress!, p.Wallet), network.ChainId, log);
         lock (DefiLock) _defiExitResult = $"Broadcast: {hash}";
         var receipt = await ReceiptWaiter.WaitAsync(() => web3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(hash),

@@ -33,6 +33,26 @@ internal static class DefiSnapshotChecks
             check("Status restores partial scan without starting a scan or withdrawal", status["positions"]!.Count() == 1 && (bool)status["cancelled"]! && !(bool)status["running"]! && !(bool)status["exitRunning"]!);
             db.SaveDefiSnapshot(saved with { NeedsRescan = true });
             check("Broadcast invalidation survives restoration", (bool)Status(Open(path))["needsRescan"]!);
+            db.SaveDefiSnapshot(saved with { Positions = [p with { Type = "loan" }] }); Status(db);
+            var service = new DbConnectionService();
+            typeof(DbConnectionService).GetField("_db", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(service, db);
+            var controller = new TreasuryController(service, null!);
+            var scanField = typeof(TreasuryController).GetField("_defiScan", BindingFlags.NonPublic | BindingFlags.Static)!;
+            using (var scan = new CancellationTokenSource()) {
+                scanField.SetValue(null, scan);
+                try {
+                    var result = controller.PreviewDefiExit(new() { AccountId = 1, PositionId = p.Id }).GetAwaiter().GetResult();
+                    check("A scanned account passes the scan lock while other accounts remain pending", result is BadRequestObjectResult && JObject.FromObject(((BadRequestObjectResult)result).Value!)["error"]!.ToString().Contains("adapter"));
+                    result = controller.PreviewDefiExit(new() { AccountId = 2, PositionId = p.Id }).GetAwaiter().GetResult();
+                    check("An unscanned account remains blocked during the background scan", result is ConflictObjectResult);
+                } finally { scanField.SetValue(null, null); }
+            }
+            db.SaveDefiSnapshot(saved with { Accounts = [new(1, wallet, "scanned"), new(2, wallet, "scanned")] }); Status(Open(path));
+            typeof(TreasuryController).GetMethod("InvalidateDefiAccount", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, [1]);
+            var ready = typeof(TreasuryController).GetMethod("DefiAccountReady", BindingFlags.NonPublic | BindingFlags.Static)!;
+            check("Invalidating one account keeps another scanned account usable", !(bool)ready.Invoke(null, [1])! && (bool)ready.Invoke(null, [2])!);
+            status = Status(Open(path));
+            check("Account-specific invalidation survives restart without blocking other accounts", (bool)status["needsRescan"]! && !(bool)status["requiresFullRescan"]! && !(bool)ready.Invoke(null, [1])! && (bool)ready.Invoke(null, [2])!);
             check("Switching databases never exposes another database's positions", Status(Open(other))["positions"]!.Count() == 0);
             db.Query($"UPDATE _addresses SET evm = '0x2222222222222222222222222222222222222222' WHERE id = 1", thrw: true);
             status = Status(Open(path));

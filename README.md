@@ -50,7 +50,10 @@ Results, account progress, scan time and errors are checkpointed in the connecte
 table after each account and restored when opening DeFi after a restart. Interrupted scans retain partial results;
 pending/error accounts remain unknown. Saved positions are matched to current wallet addresses and never shared
 across databases. Restarting does not resume scans, withdrawal queues or confirmation plans. A transaction marks
-the saved snapshot as requiring a new scan before another withdrawal; fresh RPC checks still precede every exit.
+the affected account as requiring a new scan before another withdrawal; other scanned accounts remain usable.
+Single-account withdrawal checks and execution can run while the scanner processes other accounts. Pending,
+failed or stale accounts remain blocked with a visible reason. Protocol batches still wait for scanning to finish.
+Fresh RPC checks still precede every exit.
 
 STG locks can now be withdrawn from verified Stargate escrows on Ethereum, BSC, Optimism and Arbitrum once
 the lock expires. The adapter checks the lock against the latest block timestamp, verifies the STG token and
