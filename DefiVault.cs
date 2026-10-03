@@ -17,10 +17,20 @@ public static class DefiVault
         public string? Destination { get; init; }
         public List<Output>? Outputs { get; init; }
         public Approval? Approval { get; init; }
+        public List<Approval>? Approvals { get; init; }
+        public string? TotalFeeWei { get; init; }
         public bool RequiresApprovalSimulation { get; init; }
+        public string Stage { get; init; } = "withdraw";
+        public string? Notice { get; init; }
+        public string ValueWei { get; init; } = "0";
+        public bool CompletesPending { get; init; } = true;
     }
     public sealed record Output(string Asset, string Symbol, int Decimals, string AmountRaw, decimal ValueUsd);
-    public sealed record Approval(string Destination, string Data, string Gas, string GasPrice);
+    public sealed record Approval(string Destination, string Data, string Gas, string GasPrice, string L1FeeWei = "0")
+    {
+        public string Purpose { get; init; } = "approval";
+        public BigInteger FeeWei => BigInteger.Parse(Gas) * BigInteger.Parse(GasPrice) + BigInteger.Parse(L1FeeWei);
+    }
     public static bool AddressValid(string? value) => value != null && System.Text.RegularExpressions.Regex.IsMatch(value, "^0x[0-9a-fA-F]{40}$");
     public static (int ChainId, string Rpc) Network(string chain)
     {
@@ -28,7 +38,7 @@ public static class DefiVault
             "xdai" => "gnosis", "matic" => "polygon", _ => chain };
         var id = Rpc.ChainId(name);
         // L2 withdrawals require chain-specific L1 fee estimates before automatic execution.
-        if (id is not (1 or 10 or 56 or 100 or 137 or 43114 or 81457 or 42161 or 324 or 534352 or 8453 or 167000))
+        if (id is not (1 or 10 or 56 or 100 or 137 or 43114 or 81457 or 42161 or 324 or 534352 or 8453 or 167000 or 1088 or 34443 or 169 or 59144))
             throw new InvalidOperationException("This network needs an additional withdrawal fee adapter.");
         return (id, Rpc.Get(name));
     }
@@ -51,24 +61,54 @@ public static class DefiVault
     public static async Task<Quote> PrepareTransaction(Web3 web3, int chainId, string asset, BigInteger amount,
         TransactionInput tx, decimal gasPercent, HttpClient? priceClient = null,
         IReadOnlyList<(string Asset, BigInteger Amount)>? outputAmounts = null,
-        BigInteger? reservedGas = null, Approval? approval = null)
+        BigInteger? reservedGas = null, Approval? approval = null, IReadOnlyList<Approval>? approvals = null,
+        IReadOnlyDictionary<string, JObject>? verifiedPrices = null)
     {
         // eth_call and estimateGas check the actual owner/receiver path before signing.
+        if ((await SwapExecution.Read(web3.Eth.ChainId.SendRequestAsync())).Value != chainId)
+            throw new InvalidDataException("Withdrawal fee RPC chain mismatch");
         // A verified LP adapter may reserve gas before its required approval. It is simulated again after approval.
         if (reservedGas == null) await SwapExecution.Read(web3.Eth.Transactions.Call.SendRequestAsync(tx));
         var gas = reservedGas == null ? await SwapExecution.Read(web3.Eth.Transactions.EstimateGas.SendRequestAsync(tx)) : new HexBigInteger(reservedGas.Value);
-        var networkPrice = await SwapExecution.Read(web3.Eth.GasPrice.SendRequestAsync());
-        var gasPrice = GasPricing.Price(networkPrice.Value, gasPercent);
-        var gasLimit = (gas.Value * 110 + 99) / 100;
+        var pricing = await DefiFees.Pricing(web3, chainId, tx, gas.Value, gasPercent);
+        var gasPrice = pricing.Price;
+        var gasLimit = (pricing.Gas * 110 + 99) / 100;
         var l1Fee = await DefiFees.L1Fee(web3, chainId, tx, gasLimit, gasPrice);
-        var totalFee = gasLimit * gasPrice + l1Fee + (approval == null ? 0 : BigInteger.Parse(approval.Gas) * BigInteger.Parse(approval.GasPrice));
+        var approvalSteps = approvals?.ToList() ?? (approval == null ? [] : new List<Approval> { approval });
+        var gasFee = gasLimit * gasPrice + l1Fee + approvalSteps.Aggregate(BigInteger.Zero, (sum, a) => sum + a.FeeWei);
+        // Verified asynchronous requests send their keeper execution payment as native transaction value.
+        var totalFee = gasFee + (tx.Value?.Value ?? 0);
         using var ownedHttp = priceClient == null ? new HttpClient { Timeout = TimeSpan.FromSeconds(30) } : null;
         var http = priceClient ?? ownedHttp!;
         async Task<JObject> Price(string address)
         {
+            if (verifiedPrices?.TryGetValue(address, out var verified) == true) {
+                if ((int?)verified["chainId"] != chainId || !address.Equals((string?)verified["address"], StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("Verified market price identity mismatch");
+                return verified;
+            }
             using var response = await http.GetAsync($"https://li.quest/v1/token?chain={chainId}&token={address}", SwapExecution.Token);
+            if (!response.IsSuccessStatusCode && chainId == 167000 &&
+                (TokenSelection.IsNative(address) || address.Equals("0xa51894664a773981c6c112c43ce576f315d5b1b6", StringComparison.OrdinalIgnoreCase))) {
+                // LI.FI does not list Taiko. Its native ETH and canonical WETH use the same
+                // asset price as Ethereum; balances and gas still come exclusively from Taiko RPC.
+                var reference = TokenSelection.IsNative(address) ? "0x0000000000000000000000000000000000000000" : "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+                using var ethResponse = await http.GetAsync($"https://li.quest/v1/token?chain=1&token={reference}", SwapExecution.Token);
+                ethResponse.EnsureSuccessStatusCode();
+                var eth = JObject.Parse(await ethResponse.Content.ReadAsStringAsync(SwapExecution.Token));
+                if ((int?)eth["chainId"] != 1 || !reference.Equals((string?)eth["address"], StringComparison.OrdinalIgnoreCase) || (int?)eth["decimals"] != 18)
+                    throw new InvalidDataException("Taiko ETH reference price mismatch");
+                if (!TokenSelection.IsNative(address)) {
+                    var decimalsRead = await SwapExecution.Read(web3.Eth.GetContract(DefiBlackwing.Abi(("decimals", [], ["uint256"])), address).GetFunction("decimals").CallAsync<BigInteger>());
+                    if (decimalsRead != 18) throw new InvalidDataException("Taiko WETH decimals mismatch");
+                }
+                eth["chainId"] = chainId; eth["address"] = address; return eth;
+            }
             response.EnsureSuccessStatusCode();
             var info = JObject.Parse(await response.Content.ReadAsStringAsync(SwapExecution.Token));
+            if (chainId == 1088 && address.Equals("0xdeaddeaddeaddeaddeaddeaddeaddeaddead0000", StringComparison.OrdinalIgnoreCase) &&
+                TokenSelection.IsNative((string?)info["address"] ?? "") && (int?)info["chainId"] == 1088 && (int?)info["decimals"] == 18)
+                info["address"] = address; // Metis's native ERC-20 predeploy is priced under LI.FI's zero-address alias.
             if ((int?)info["chainId"] != chainId || !string.Equals((string?)info["address"], address, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("Price response does not match requested asset");
             return info;
@@ -94,15 +134,16 @@ public static class DefiVault
         }
         ValidateCosts(usd, fee);
         var balance = await SwapExecution.Read(web3.Eth.GetBalance.SendRequestAsync(tx.From));
-        if (balance.Value < totalFee) throw new InvalidOperationException($"Insufficient native balance for withdrawal gas including L1 data fee: " +
-            $"available {Web3.Convert.FromWei(balance.Value):0.##################}, required {Web3.Convert.FromWei(totalFee):0.##################}. Wrapped tokens cannot pay network gas.");
+        var requiredNative = totalFee;
+        if (balance.Value < requiredNative) throw new InvalidOperationException($"Insufficient native balance for withdrawal gas including L1 data fee: " +
+            $"available {Web3.Convert.FromWei(balance.Value):0.##################}, required {Web3.Convert.FromWei(requiredNative):0.##################}. Wrapped tokens cannot pay network gas.");
         return new Quote(asset, (string?)underlying["symbol"] ?? "?", decimals, amount.ToString(), usd, fee,
             gasLimit.ToString(), gasPrice.ToString(), tx.Data, l1FeeUsd) { Destination = tx.To, Outputs = outputAmounts == null ? null : outputs,
-                Approval = approval, RequiresApprovalSimulation = reservedGas != null };
+                Approval = approvalSteps.FirstOrDefault(), Approvals = approvalSteps, TotalFeeWei = totalFee.ToString(), ValueWei = (tx.Value?.Value ?? 0).ToString(), RequiresApprovalSimulation = reservedGas != null };
     }
     public static TransactionInput Transaction(Quote quote, string vault, string wallet) => new()
     {
-        From = wallet, To = quote.Destination ?? vault, Data = quote.Data, Value = new HexBigInteger(0),
+        From = wallet, To = quote.Destination ?? vault, Data = quote.Data, Value = new HexBigInteger(BigInteger.Parse(quote.ValueWei)),
         Gas = new HexBigInteger(BigInteger.Parse(quote.Gas)), GasPrice = new HexBigInteger(BigInteger.Parse(quote.GasPrice))
     };
     public static void ValidateCosts(decimal outputUsd, decimal feeUsd)
@@ -113,6 +154,8 @@ public static class DefiVault
     public static void ValidateRecheck(Quote preview, Quote fresh, decimal spentFeeUsd = 0)
     {
         ValidateCosts(fresh.ValueUsd, fresh.FeeUsd + spentFeeUsd);
+        if (preview.Stage != fresh.Stage || preview.ValueWei != fresh.ValueWei)
+            throw new InvalidOperationException("Withdrawal stage or native transaction value changed; preview again");
         if ((fresh.InputAmountRaw ?? fresh.AmountRaw) != (preview.InputAmountRaw ?? preview.AmountRaw))
             throw new InvalidOperationException("Withdrawal input amount changed; preview again");
         if (!string.Equals(preview.Destination, fresh.Destination, StringComparison.OrdinalIgnoreCase))

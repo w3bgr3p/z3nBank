@@ -33,6 +33,11 @@ internal static class DefiSnapshotChecks
             check("Status restores partial scan without starting a scan or withdrawal", status["positions"]!.Count() == 1 && (bool)status["cancelled"]! && !(bool)status["running"]! && !(bool)status["exitRunning"]!);
             db.SaveDefiSnapshot(saved with { NeedsRescan = true });
             check("Broadcast invalidation survives restoration", (bool)Status(Open(path))["needsRescan"]!);
+            var pending = p with { PendingWithdrawal = true, Type = "staked" };
+            db.SaveDefiSnapshot(saved with { Positions = [pending], PendingWithdrawals = [pending] });
+            var restoredPending = Open(path).LoadDefiSnapshot()!;
+            check("Pending withdrawal survives restart with owner identity and no transaction plan", JToken.DeepEquals(JObject.FromObject(restoredPending.PendingWithdrawals!.Single()), JObject.FromObject(pending)) &&
+                !(bool)Status(Open(path))["exitRunning"]!);
             db.SaveDefiSnapshot(saved with { Positions = [p with { Type = "loan" }] }); Status(db);
             var service = new DbConnectionService();
             typeof(DbConnectionService).GetField("_db", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(service, db);
@@ -42,7 +47,7 @@ internal static class DefiSnapshotChecks
                 scanField.SetValue(null, scan);
                 try {
                     var result = controller.PreviewDefiExit(new() { AccountId = 1, PositionId = p.Id }).GetAwaiter().GetResult();
-                    check("A scanned account passes the scan lock while other accounts remain pending", result is BadRequestObjectResult && JObject.FromObject(((BadRequestObjectResult)result).Value!)["error"]!.ToString().Contains("adapter"));
+                    check("A scanned account passes the scan lock while other accounts remain pending", result is BadRequestObjectResult && JObject.FromObject(((BadRequestObjectResult)result).Value!)["error"]!.ToString().Contains("outstanding loan"));
                     result = controller.PreviewDefiExit(new() { AccountId = 2, PositionId = p.Id }).GetAwaiter().GetResult();
                     check("An unscanned account remains blocked during the background scan", result is ConflictObjectResult);
                 } finally { scanField.SetValue(null, null); }

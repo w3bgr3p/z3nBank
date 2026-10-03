@@ -10,8 +10,13 @@ public sealed record DefiPosition(string Id, int AccountId, string Wallet, strin
     public bool HasProxy { get; init; }
     public decimal DebtUsd { get; init; }
     public string? ProtocolId { get; init; }
+    public string? AdapterId { get; init; }
+    public string? Controller { get; init; }
+    public string? PoolIndex { get; init; }
+    public string? DetailJson { get; init; }
     public string? WithdrawalReason => DefiWithdrawal.Unavailable(this);
     public string? PriceSource { get; init; }
+    public bool PendingWithdrawal { get; init; }
 }
 
 public sealed class DefiPositionsClient : IDisposable
@@ -114,9 +119,10 @@ public sealed class DefiPositionsClient : IDisposable
                 var detail = item["detail"] ?? throw new InvalidDataException("Missing portfolio detail");
                 var before = result.Count;
                 var supplied = false;
-                foreach (var (field, type) in new[] { ("supply_token_list", "deposit"), ("borrow_token_list", "loan"), ("reward_token_list", "reward"), ("collateral_token_list", "collateral"), ("token_list", "deposit") })
+                foreach (var (field, type) in new[] { ("supply_token_list", "deposit"), ("borrow_token_list", "loan"), ("reward_token_list", "reward"), ("collateral_token_list", "collateral"), ("token_list", "deposit"), ("token", "vesting") })
                 {
-                    if (detail[field] is not JArray tokens) continue;
+                    var tokens = detail[field] as JArray ?? (field == "token" && detail[field] is JObject single ? new JArray(single) : null);
+                    if (tokens == null) continue;
                     if (field == "token_list" && supplied) continue;
                     if (field == "supply_token_list") supplied = tokens.Count > 0;
                     var tokenIndex = 0;
@@ -127,7 +133,7 @@ public sealed class DefiPositionsClient : IDisposable
                         if (amount <= 0) continue;
                         var price = Number(token["price"]);
                         var name = ((string?)item["name"] ?? "").ToLowerInvariant();
-                        var kind = type == "deposit" && name.Contains("stak") ? "staked" : type == "deposit" && name.Contains("lock") ? "locked" : type;
+                        var kind = type == "deposit" && name.Contains("reward") ? "reward" : type == "deposit" && name.Contains("stak") ? "staked" : type == "deposit" && name.Contains("lock") ? "locked" : type;
                         result.Add(new DefiPosition($"{group}:{field}:{tokenIndex++}", accountId, wallet, chain,
                             (string?)protocol["name"] ?? protocolId, kind, (string?)token["optimized_symbol"] ?? (string?)token["symbol"] ?? "?",
                             rawAmount, Value(amount, price),
@@ -135,6 +141,8 @@ public sealed class DefiPositionsClient : IDisposable
                                 WithdrawActions = item["withdraw_actions"]?.ToObject<RabbyWithdrawAction[]>() ?? [],
                                 DebtUsd = Number(item["stats"]?["debt_usd_value"]) ?? 0,
                                 ProtocolId = protocolId,
+                                AdapterId = (string?)item["pool"]?["adapter_id"], Controller = (string?)item["pool"]?["controller"],
+                                PoolIndex = (string?)item["pool"]?["index"], DetailJson = detail.ToString(Newtonsoft.Json.Formatting.None),
                                 HasProxy = !string.IsNullOrWhiteSpace((string?)item["proxy_detail"]?["proxy_contract_id"])
                             });
                     }
@@ -146,6 +154,8 @@ public sealed class DefiPositionsClient : IDisposable
                             WithdrawActions = item["withdraw_actions"]?.ToObject<RabbyWithdrawAction[]>() ?? [],
                             DebtUsd = Number(item["stats"]?["debt_usd_value"]) ?? 0,
                             ProtocolId = protocolId,
+                            AdapterId = (string?)item["pool"]?["adapter_id"], Controller = (string?)item["pool"]?["controller"],
+                            PoolIndex = (string?)item["pool"]?["index"], DetailJson = detail.ToString(Newtonsoft.Json.Formatting.None),
                             HasProxy = !string.IsNullOrWhiteSpace((string?)item["proxy_detail"]?["proxy_contract_id"])
                         });
             }
@@ -156,6 +166,8 @@ public sealed class DefiPositionsClient : IDisposable
     public static string? AssetId(string? id, string chain) => id == chain ? "0x0000000000000000000000000000000000000000" : id;
     public static string? PoolId(string? id, string? protocol)
     {
+        if (protocol == "GMX" && string.Equals(id, DefiGmxGlp.Tracker + ":" + DefiGmxGlp.FeeTracker, StringComparison.OrdinalIgnoreCase)) return DefiGmxGlp.Tracker;
+        if (protocol == "Sablier" && id?.EndsWith(":receiver", StringComparison.Ordinal) == true && DefiVault.AddressValid(id[..^9])) return id[..^9];
         if (protocol == "Compound V3" && id != null)
             foreach (var suffix in new[] { ":lending", ":yield" })
                 if (id.EndsWith(suffix, StringComparison.Ordinal) && DefiVault.AddressValid(id[..^suffix.Length])) return id[..^suffix.Length];

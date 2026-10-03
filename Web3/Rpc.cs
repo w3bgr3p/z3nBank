@@ -8,6 +8,8 @@ using System.Collections.Generic;
     {
         Arbitrum = 42161,
         Base = 8453,
+        Mode = 34443,
+        Metis = 1088,
         Celo = 42220,
         Blast = 81457,
         Optimism = 10,
@@ -54,6 +56,8 @@ using System.Collections.Generic;
             {RpcUrl.Ethereum, "https://ethereum-rpc.publicnode.com"},
             {RpcUrl.Arbitrum, "https://arbitrum-one.publicnode.com"},
             {RpcUrl.Base, "https://base-rpc.publicnode.com"},
+            {RpcUrl.Mode, "https://mainnet.mode.network"},
+            {RpcUrl.Metis, "https://andromeda.metis.io/?owner=1088"},
             {RpcUrl.Celo, "https://forno.celo.org"},
             {RpcUrl.Blast, "https://rpc.blast.io"},
             {RpcUrl.Fantom, "https://fantom.drpc.org"},

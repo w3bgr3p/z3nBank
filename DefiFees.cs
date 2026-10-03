@@ -10,6 +10,18 @@ public static class DefiFees
     public const string BlastOracle = "0x420000000000000000000000000000000000000F";
     public const string ScrollOracle = "0x5300000000000000000000000000000000000002";
     private const string Abi = "[{\"type\":\"function\",\"name\":\"getL1Fee\",\"inputs\":[{\"name\":\"data\",\"type\":\"bytes\"}],\"outputs\":[{\"type\":\"uint256\"}],\"stateMutability\":\"view\"}]";
+    public static async Task<(BigInteger Gas, BigInteger Price)> Pricing(Web3 web3, int chainId, TransactionInput tx, BigInteger gas, decimal boost)
+    {
+        if (chainId != 59144) return (gas, GasPricing.Price((await SwapExecution.Read(web3.Eth.GasPrice.SendRequestAsync())).Value, boost));
+        // Linea includes Ethereum publication costs in priorityFeePerGas, per its official RPC API.
+        var estimate = await SwapExecution.Read(web3.Client.SendRequestAsync<Newtonsoft.Json.Linq.JObject>(
+            new Nethereum.JsonRpc.Client.RpcRequest(Guid.NewGuid().ToString(), "linea_estimateGas", tx)));
+        BigInteger Number(string name) => new Nethereum.Hex.HexTypes.HexBigInteger((string?)estimate[name] ??
+            throw new InvalidDataException("Linea fee estimate is missing " + name)).Value;
+        var price = Number("baseFeePerGas") + Number("priorityFeePerGas");
+        if (price <= 0 || Number("gasLimit") <= 0) throw new InvalidOperationException("Linea publication fee estimate unavailable");
+        return (BigInteger.Max(gas, Number("gasLimit")), GasPricing.Price(price, boost));
+    }
     public static byte[] Unsigned(TransactionInput tx, BigInteger chainId, BigInteger nonce, BigInteger gas, BigInteger price, bool signatureReserve = false)
     {
         byte[] Number(BigInteger value) => value == 0 ? Array.Empty<byte>() : value.ToByteArray(isUnsigned: true, isBigEndian: true);
@@ -24,8 +36,8 @@ public static class DefiFees
         // Arbitrum eth_estimateGas includes the L1 posting component in its gas units.
         // zkSync Era estimates charge execution and pubdata together, including for legacy EOA transactions.
         // Taiko charges EVM transaction gas through its L2 base fee, without an OP data-fee oracle surcharge.
-        if (chainId is 1 or 56 or 100 or 137 or 43114 or 42161 or 324 or 167000) return 0;
-        if (chainId is not (10 or 8453 or 81457 or 534352)) throw new InvalidOperationException("Missing network data fee adapter");
+        if (chainId is 1 or 56 or 100 or 137 or 43114 or 42161 or 324 or 167000 or 59144) return 0;
+        if (chainId is not (10 or 8453 or 34443 or 169 or 1088 or 81457 or 534352)) throw new InvalidOperationException("Missing network data fee adapter");
         var nonce = await SwapExecution.Read(web3.Eth.Transactions.GetTransactionCount.SendRequestAsync(tx.From, BlockParameter.CreatePending()));
         if (chainId is 10 or 8453)
         {
@@ -42,7 +54,14 @@ public static class DefiFees
         // Blast's oracle adds worst-case signature bytes to the unsigned RLP. No key or signature is used here.
         // Scroll requires full RLP size, including v/r/s: reserve two 32-byte non-zero fields without signing.
         var fee = await SwapExecution.Read(web3.Eth.GetContract(Abi, chainId == 534352 ? ScrollOracle : BlastOracle).GetFunction("getL1Fee")
-            .CallAsync<BigInteger>(Unsigned(tx, chainId, nonce.Value, gas, price, signatureReserve: chainId == 534352)));
+            .CallAsync<BigInteger>(Unsigned(tx, chainId, nonce.Value, gas, price, signatureReserve: chainId is 534352 or 34443 or 169 or 1088)));
+        if (fee == 0 && chainId == 1088) {
+            // Metis can explicitly disable the publication surcharge via a zero L1 base fee.
+            // Distinguish that configured value from an absent or failed oracle response.
+            var baseFee = await SwapExecution.Read(web3.Eth.GetContract(DefiBlackwing.Abi(("l1BaseFee", [], ["uint256"])), BlastOracle)
+                .GetFunction("l1BaseFee").CallAsync<BigInteger>());
+            if (baseFee == 0) return 0;
+        }
         if (fee <= 0) throw new InvalidOperationException("L1 data fee unavailable; withdrawal blocked");
         return (fee * 125 + 99) / 100; // Data-fee reserve; execution obtains a fresh estimate before signing.
     }

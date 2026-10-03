@@ -127,9 +127,8 @@ internal static class DefiChecks
         check("LFJ reward uses verified claim support", DefiWithdrawal.Unavailable(stg with { Protocol = "LFJ", Chain = "arb", Type = "reward", AssetAddress = DefiJoe.Reward, VaultAddress = DefiJoe.Staking }) == null);
         foreach (var name in new[] { "PancakeSwap V3", "Curve", "Merkl", "Hana Network", "Hana Finance" })
             check(name + " never attempts an incompatible ERC-4626 exit", DefiWithdrawal.Unsupported(stg with { Protocol = name, Type = "deposit" }) != null);
-        var l2Blocked = false;
-        try { DefiVault.Network("linea"); } catch (InvalidOperationException) { l2Blocked = true; }
-        check("L2 withdrawal blocked until additional fees are supported", l2Blocked);
+        check("Linea, Mode, Manta and Metis have configured fee paths", DefiVault.Network("linea").ChainId == 59144 &&
+            DefiVault.Network("mode").ChainId == 34443 && DefiVault.Network("manta").ChainId == 169 && DefiVault.Network("metis").ChainId == 1088);
         check("Base and Taiko have configured withdrawal fee paths", DefiVault.Network("base").ChainId == 8453 && DefiVault.Network("taiko").ChainId == 167000);
         foreach (var pair in new[] { (0m, 1m), (1m, 0m), (1m, 1m), (1m, 2m) })
         {

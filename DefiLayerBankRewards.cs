@@ -31,6 +31,22 @@ public static class DefiLayerBankRewards
         // Read the first two ABI words; the dynamic third field contains locked earnings and is not withdrawn.
         var earned = await SwapExecution.Read(web3.Eth.Transactions.Call.SendRequestAsync(rewards.GetFunction("earnedBalances").CreateCallInput(p.Wallet)));
         var locked = DefiLending.Word(earned, 0); var unlocked = DefiLending.Word(earned, 1);
+        if (unlocked <= 0 && locked == 0) {
+            var markets = await SwapExecution.Read(web3.Eth.GetContract(DefiBlackwing.Abi(("allMarkets", [], ["address[]"])), DefiScrollLending.Core)
+                .GetFunction("allMarkets").CallAsync<List<string>>());
+            if (markets.Count is < 1 or > 200) throw new InvalidDataException("Invalid LayerBank reward market list");
+            var accrued = await SwapExecution.Read(web3.Eth.GetContract(DefiBlackwing.Abi(("accuredLAB", ["address[]", "address"], ["uint256"])), Distributor)
+                .GetFunction("accuredLAB").CallAsync<BigInteger>(markets.ToArray(), p.Wallet));
+            if (accrued <= 0) throw new InvalidOperationException("No accrued or unlocked LAB.s rewards remain on-chain. The provider estimate is stale.");
+            var input = exact ?? "vest:" + accrued;
+            if (!input.StartsWith("vest:") || accrued < BigInteger.Parse(input[5..])) throw new InvalidOperationException("LayerBank accrued rewards decreased; preview again");
+            var duration = await SwapExecution.Read(web3.Eth.GetContract(DefiBlackwing.Abi(("vestDuration", [], ["uint256"])), Rewards)
+                .GetFunction("vestDuration").CallAsync<BigInteger>());
+            var tx = DefiActionAbi.Build(p.Wallet, DefiScrollLending.Core, "claimLab()", []);
+            return (await DefiRabbyActions.PrepareBuilt(web3, chainId, p, gasPercent, tx, input, prices,
+                futureOutputs: new[] { (Lab, accrued) })) with { Stage = "request",
+                Notice = $"Claims accrued LAB.s into {duration}-second vesting. No spendable LAB.s arrives now. After maturity, check this reward again to withdraw without an early-exit penalty." };
+        }
         if (unlocked <= 0) throw new InvalidOperationException("No unlocked LAB.s rewards available. The displayed amount is a provider reward estimate. Claiming accrued rewards starts vesting; early exit can charge a penalty. This check does not claim, lock or burn tokens." +
             (locked > 0 ? $" Locked reward balance: {Web3.Convert.FromWei(locked)} LAB.s." : ""));
         var amount = exact == null ? unlocked : BigInteger.Parse(exact);

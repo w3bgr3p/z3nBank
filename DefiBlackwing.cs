@@ -10,9 +10,11 @@ public static class DefiBlackwing
     // Verified BSC launch vault implementation, Sourcify contracts/evm/launch_vault/vault.sol.
     public const string Vault = "0xd00789260984160a64dcf19a03896dff73bf4514";
     public const string Implementation = "0xc6ade8a68026d582ab37b879d188caf7e405dd09";
+    public const string ArbitrumImplementation = "0xa92299289361fdcbb4ce9acbb512a84bd5fab37d";
     private const string ImplementationSlot = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
-    public static bool IsSupported(DefiPosition p) => p.Protocol == "Blackwing" && Rpc.Normalize(p.Chain) == "bsc" &&
-        string.Equals(p.VaultAddress, Vault, StringComparison.OrdinalIgnoreCase);
+    public static bool IsSupported(DefiPosition p) => p.Protocol == "Blackwing" && p.Type is "staked" or "deposit" &&
+        (Rpc.Normalize(p.Chain) == "bsc" && string.Equals(p.VaultAddress, Vault, StringComparison.OrdinalIgnoreCase) ||
+         Rpc.ChainId(p.Chain) == 42161 && string.Equals(p.VaultAddress, Implementation, StringComparison.OrdinalIgnoreCase));
     internal static string Abi(params (string Name, string[] Inputs, string[] Outputs)[] functions) => new JArray(functions.Select(f =>
         new JObject { ["type"] = "function", ["name"] = f.Name, ["stateMutability"] = "nonpayable",
             ["inputs"] = new JArray(f.Inputs.Select(t => new JObject { ["type"] = t })),
@@ -20,14 +22,14 @@ public static class DefiBlackwing
     public static async Task<DefiVault.Quote> Prepare(Web3 web3, int chainId, DefiPosition p, decimal gasPercent,
         string? exactAmount = null, HttpClient? prices = null)
     {
-        if (!IsSupported(p) || chainId != 56 || (await SwapExecution.Read(web3.Eth.ChainId.SendRequestAsync())).Value != 56)
+        if (!IsSupported(p) || chainId != Rpc.ChainId(p.Chain) || (await SwapExecution.Read(web3.Eth.ChainId.SendRequestAsync())).Value != chainId)
             throw new InvalidOperationException("Blackwing vault or RPC chain is not verified");
-        var implementation = await SwapExecution.Read(web3.Eth.GetStorageAt.SendRequestAsync(Vault, new HexBigInteger(ImplementationSlot)));
-        if (!implementation.EndsWith(Implementation[2..], StringComparison.OrdinalIgnoreCase))
+        var implementation = await SwapExecution.Read(web3.Eth.GetStorageAt.SendRequestAsync(p.VaultAddress!, new HexBigInteger(ImplementationSlot)));
+        if (!implementation.EndsWith((chainId == 56 ? Implementation : ArbitrumImplementation)[2..], StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Blackwing implementation changed; withdrawal adapter must be verified again");
         var vault = web3.Eth.GetContract(Abi(("vaultTokenAddress", ["address"], ["address"]),
             ("balance", ["address", "address"], ["uint256"]), ("withdraw", ["address", "uint256"], []),
-            ("lastDepositBlock", ["address"], ["uint256"]), ("withdrawBlockWait", [], ["uint256"])), Vault);
+            ("lastDepositBlock", ["address"], ["uint256"]), ("withdrawBlockWait", [], ["uint256"])), p.VaultAddress!);
         var lp = await SwapExecution.Read(vault.GetFunction("vaultTokenAddress").CallAsync<string>(p.AssetAddress!));
         if (!DefiVault.AddressValid(lp)) throw new InvalidOperationException("Invalid Blackwing vault token");
         var shares = await SwapExecution.Read(web3.Eth.GetContract(Abi(("balanceOf", ["address"], ["uint256"])), lp)

@@ -12,14 +12,17 @@ public static class DefiScrollLending
     public const string Comet = "0xB2f97c1Bd3bf02f5e74d13f02E3e26F93D77CE44";
     // compound-finance/comet, deployments/polygon/usdc/roots.json.
     public const string PolygonComet = "0xF25212E676D1F7F89Cd72fFEe66158f541246445";
+    public const string BaseComet = "0x46e6b214b524310239732d51387075e0e70970bf";
+    public const string ArbitrumComet = "0x9c4ec768c28520b50860ea7a15bd7213a9ff58bf";
     public const string Native = "0x0000000000000000000000000000000000000000";
     private static bool Same(string? a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
     public static bool IsLayerBank(DefiPosition p) => p.Protocol == "LayerBank" && Rpc.Normalize(p.Chain) == "scroll" && Same(p.VaultAddress, Core);
     public static bool IsCompound(DefiPosition p) => p.Protocol == "Compound V3" && p.Type == "deposit" &&
-        (Rpc.Normalize(p.Chain) == "scroll" && Same(p.VaultAddress, Comet) || Rpc.Normalize(p.Chain) == "polygon" && Same(p.VaultAddress, PolygonComet));
+        (Rpc.Normalize(p.Chain) == "scroll" && Same(p.VaultAddress, Comet) || Rpc.Normalize(p.Chain) == "polygon" && Same(p.VaultAddress, PolygonComet) ||
+         Rpc.ChainId(p.Chain) == 8453 && Same(p.VaultAddress, BaseComet) || Rpc.ChainId(p.Chain) == 42161 && Same(p.VaultAddress, ArbitrumComet));
     public static async Task<DefiVault.Quote> Prepare(Web3 web3, int chainId, DefiPosition p, decimal gasPercent, string? exact = null, HttpClient? prices = null)
     {
-        var expectedChain = Rpc.Normalize(p.Chain) == "polygon" ? 137 : 534352;
+        var expectedChain = Rpc.ChainId(p.Chain);
         if (chainId != expectedChain || (await SwapExecution.Read(web3.Eth.ChainId.SendRequestAsync())).Value != chainId)
             throw new InvalidOperationException("RPC chain does not match the lending market");
         if (p.Type != "deposit") throw new InvalidOperationException("Only supplied lending assets can be withdrawn; reward claims require a separate adapter");

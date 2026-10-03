@@ -13,6 +13,7 @@ public partial class TreasuryController
         public int AccountId { get; set; }
         public string PositionId { get; set; } = "";
         public decimal GasBoostPercent { get; set; } = GasPricing.DefaultPercent;
+        public string Action { get; set; } = "withdraw";
     }
     private static readonly object DefiLock = new();
     private static CancellationTokenSource? _defiScan;
@@ -34,7 +35,7 @@ public partial class TreasuryController
         PersistDefiSnapshot();
     }
     private sealed record ExitPlan(Guid Id, DefiPosition Position, DefiVault.Quote Quote, Db Database,
-        decimal GasPercent, DateTimeOffset Expires);
+        decimal GasPercent, DateTimeOffset Expires, string Action = "withdraw");
     private static ExitPlan? _defiExit;
     private static bool _defiExitRunning;
     private static int _defiBlockingBridges;
@@ -60,7 +61,7 @@ public partial class TreasuryController
             needsRescan = _defiNeedsRescan || HasStaleDefiAccounts, requiresFullRescan = _defiNeedsRescan,
             preparing = _defiPrepare != null, prepareDone = _defiPrepareDone, prepareTotal = _defiPrepareTotal,
             batchTotal = _defiBatchTotal, batchAccount = _defiBatchAccount, batchResults = DefiBatchResults.ToArray(),
-            exitRunning = _defiExitRunning, exitResult = _defiExitResult, actionsVersion = 1, provider = "Rabby (DeBank data)" });
+            exitRunning = _defiExitRunning, exitResult = _defiExitResult, actionsVersion = 2, provider = "Rabby (DeBank data)" });
     }
     [HttpPost("defi/refresh-account")]
     public async Task<IActionResult> RefreshDefiAccount([FromBody] int accountId)
@@ -70,7 +71,7 @@ public partial class TreasuryController
         using var source = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
         lock (DefiLock)
         {
-            if (_defiPrepare != null || _defiExitRunning || !DefiAccountReady(accountId))
+            if (_defiPrepare != null || _defiExitRunning || _defiNeedsRescan || !DefiAccounts.TryGetValue(accountId, out var cachedAccount) || cachedAccount.Status == "pending")
                 return Conflict(new { error = "Account refresh is unavailable during this operation or before scanning" });
             db = _dbService.GetDb();
             if (_defiDb != db) return Conflict(new { error = "Database changed; load DeFi again" });
@@ -83,11 +84,15 @@ public partial class TreasuryController
             log.Send("Refreshing DeFi account positions and Rabby withdrawal actions");
             using var client = new DefiPositionsClient();
             var rows = await client.ReadForScanAsync(accountId, wallet, source.Token);
+            await ReconcilePendingDefi(accountId, wallet, db, source.Token);
             lock (DefiLock)
             {
-                if (_defiVersion != version || _defiDb != db || _dbService.GetDb() != db || !DefiAccountReady(accountId))
+                if (_defiVersion != version || _defiDb != db || _dbService.GetDb() != db ||
+                    !wallet.Equals(db.Get("evm", "_addresses", where: $"id = {accountId}"), StringComparison.OrdinalIgnoreCase))
                     return Conflict(new { error = "Positions changed during refresh; load DeFi again" });
+                MergePendingDefi(rows, accountId, wallet);
                 DefiRows.RemoveAll(p => p.AccountId == accountId); DefiRows.AddRange(rows);
+                DefiAccounts[accountId] = new DefiScanAccount(accountId, wallet, "scanned");
                 _defiVersion++; _defiExit = null; _defiBatchPlan = null;
                 SaveDefiProgress();
             }
@@ -111,6 +116,7 @@ public partial class TreasuryController
         {
             if (_defiScan != null || _defiPrepare != null || _defiExitRunning) return Conflict(new { error = "DeFi operation is already running" });
             var db = _dbService.GetDb();
+            if (_defiDb != db) RestoreDefiSnapshot(db);
             var accounts = new List<(int Id, string Address)>();
             for (var id = 1; id <= request.MaxId; id++)
             {
@@ -137,7 +143,8 @@ public partial class TreasuryController
                         try
                         {
                             var rows = await client.ReadForScanAsync(account.Id, account.Address, source.Token);
-                            lock (DefiLock) { DefiRows.AddRange(rows); DefiAccounts[account.Id] = new DefiScanAccount(account.Id, account.Address, "scanned"); }
+                            await ReconcilePendingDefi(account.Id, account.Address, db, source.Token);
+                            lock (DefiLock) { MergePendingDefi(rows, account.Id, account.Address); DefiRows.AddRange(rows); DefiAccounts[account.Id] = new DefiScanAccount(account.Id, account.Address, "scanned"); }
                             accountLog.Send($"DeFi scan completed | {rows.Count} position assets", "SUCCESS");
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -174,6 +181,7 @@ public partial class TreasuryController
     {
         var check = CheckDbConnection(); if (check != null) return check;
         if (!GasPricing.IsValid(request.GasBoostPercent)) return BadRequest(new { error = "Invalid gas percentage" });
+        if (request.Action is not ("withdraw" or "cancel")) return BadRequest(new { error = "Unsupported DeFi action" });
         DefiPosition? position; var db = _dbService.GetDb(); int version;
         lock (DefiLock)
         {
@@ -184,8 +192,6 @@ public partial class TreasuryController
             if (db != _defiDb) position = null;
         }
         if (position == null) return BadRequest(new { error = "Scan DeFi positions for the current database first" });
-        if ((position.Type is not ("deposit" or "staked") && position.WithdrawActions.Length == 0 && !DefiStargate.IsSupported(position) && !DefiJoe.IsSupported(position) && !DefiLayerBankRewards.IsSupported(position)) || !DefiVault.AddressValid(position.VaultAddress) || !DefiVault.AddressValid(position.AssetAddress))
-            return BadRequest(new { error = "No automatic withdrawal adapter for this position" });
         var previewLog = new Logger(true, acc: position.AccountId.ToString());
         previewLog.Send($"DeFi withdrawal check | {position.Protocol} | {position.Chain} | {position.Symbol}");
         try
@@ -197,13 +203,13 @@ public partial class TreasuryController
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
             timeout.CancelAfter(TimeSpan.FromSeconds(90));
             await SwapExecution.Run(timeout.Token, async () => {
-                quote = await DefiWithdrawal.Prepare(new Web3(network.Rpc), network.ChainId, position, request.GasBoostPercent);
+                quote = await DefiWithdrawal.Prepare(new Web3(network.Rpc), network.ChainId, position, request.GasBoostPercent, action: request.Action);
             }, request.GasBoostPercent);
             lock (DefiLock)
             {
                 if (_defiVersion != version || !DefiAccountReady(request.AccountId) || _defiPrepare != null || _defiExitRunning || _defiDb != db || db != _dbService.GetDb())
                     return Conflict(new { error = "Positions changed; preview again" });
-                _defiExit = new ExitPlan(Guid.NewGuid(), position, quote!, db, request.GasBoostPercent, DateTimeOffset.UtcNow.AddMinutes(2));
+                _defiExit = new ExitPlan(Guid.NewGuid(), position, quote!, db, request.GasBoostPercent, DateTimeOffset.UtcNow.AddMinutes(2), request.Action);
                 previewLog.Send($"DeFi preview ready | {position.Protocol} | {position.Chain} | output ${quote!.ValueUsd:0.########} | fee ${quote.FeeUsd:0.########}", "SUCCESS");
                 return Ok(new { planId = _defiExit.Id, position, quote, gasBoostPercent = request.GasBoostPercent });
             }
@@ -239,7 +245,8 @@ public partial class TreasuryController
                     {
                         await SwapExecution.Run(operation.Cancellation.Token, async () => {
                             var hash = await ExecuteDefiPosition(plan, pin);
-                            lock (DefiLock) _defiExitResult = $"Confirmed: {hash}. Refresh DeFi and wallet balances.";
+                            lock (DefiLock) _defiExitResult = plan.Quote.Stage == "request" ?
+                                $"Withdrawal request confirmed: {hash}. {plan.Quote.Notice}" : $"Confirmed: {hash}. Refresh DeFi and wallet balances.";
                         }, plan.GasPercent);
                     }
                     catch (OperationCanceledException)

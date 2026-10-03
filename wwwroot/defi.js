@@ -14,7 +14,7 @@
         <button id="defiSelectNone">Clear</button><button id="defiBatch" disabled>Withdraw selected</button>
         <span id="defiSelected"></span><button id="defiInfoToggle">Info</button></div>
         <div id="defiInfo" hidden>Free Rabby API · DeBank estimates. Values are separate from wallet balances; loans are subtracted, ? means unknown price or an unscanned account.
-        Automatic withdrawal supports ERC-4626 vaults, SynFutures V3 Gate deposits on Blast, verified Aave V3 markets, LFJ sJOE on Arbitrum, the verified Blackwing BSC launch vault and SyncSwap classic LP on zkSync Era. SyncSwap returns both tokens with 0.5% minimum-output protection; approval fees are included.
+        Check withdrawal reads live contract balances and simulates the verified protocol exit before confirmation. Deposits, LP, staking and rewards have separate routes. Queued exits show their waiting period and later claim; fees include required approvals, network data fees and keeper payments. Locked funds, outstanding loans, unavailable liquidity and withdrawals costing more than their output are explained before sending.
         Other staking, LP and queued exits require adapters. Withdrawals return underlying tokens to the same wallet.</div>
         <div id="defiStatus" role="status"></div><div id="defiExitStatus" role="status"></div>
         <div class="defi-workspace"><div class="defi-grid-wrap"><table class="defi-grid"><thead id="defiGridHead"></thead><tbody id="defiGridBody"></tbody></table></div>
@@ -59,7 +59,7 @@
         target.onblur = hideTooltip;
     }
     const modal = document.createElement('dialog'); modal.id = 'defiDetail'; modal.className = 'defi-panel';
-    modal.innerHTML = `<div class="defi-heading"><strong id="defiDetailTitle"></strong><button id="defiClose">Close</button></div>
+    modal.innerHTML = `<div class="defi-heading"><strong id="defiDetailTitle"></strong><div><button id="defiRefreshAccount">Refresh account</button><button id="defiClose">Close</button></div></div>
         <div id="defiDetailBlocked" role="status" aria-live="polite" hidden></div>
         <div id="defiDetailStatus" role="status"></div><div class="defi-table-wrap"><table><thead><tr>
         <th>Network</th><th>Protocol</th><th>Type</th><th>Asset</th><th>Amount</th><th>Est. USD</th><th>Withdrawal</th>
@@ -227,7 +227,7 @@
         hideTooltip();
         message = ''; detail = { accountId, chain }; renderDetails(); buttons(); if (!modal.open) modal.showModal();
         const cached = state?.positions.filter(p => p.accountId === accountId) || [];
-        if (state?.actionsVersion === 1 && cached.some(p => !p.protocolId) && !withdrawalBlockReason(accountId) && !refreshingAccounts.has(accountId))
+        if (state?.actionsVersion >= 2 && cached.some(p => !p.protocolId || !p.adapterId) && !withdrawalBlockReason(accountId) && !refreshingAccounts.has(accountId))
             refreshSavedAccount(accountId);
     }
     async function refreshSavedAccount(accountId) {
@@ -237,19 +237,27 @@
         catch (e) { message = `Could not refresh Rabby actions: ${e.message}. Previous positions kept.`; }
         finally { refreshingAccounts.delete(accountId); await poll(); }
     }
+    el('defiRefreshAccount').onclick = () => detail && refreshSavedAccount(detail.accountId);
     function renderDetails() {
+        el('defiRefreshAccount').disabled = busy || state?.preparing || state?.exitRunning || state?.requiresFullRescan ||
+            refreshingAccounts.has(detail.accountId) || state?.accounts.find(a => a.id === detail.accountId)?.status === 'pending';
         el('defiDetailTitle').textContent = `Account #${detail.accountId}${detail.chain ? ' · ' + detail.chain : ''}${el('defiProtocol').value ? ' · ' + el('defiProtocol').value : ''}`;
         el('defiDetailStatus').textContent = message || state.exitResult || '';
         el('defiRows').replaceChildren();
         for (const p of filtered().filter(p => p.accountId === detail.accountId && (!detail.chain || p.chain === detail.chain))) {
             const row = document.createElement('tr');
-            for (const value of [p.chain, p.protocol, p.type, p.symbol, p.amount, p.valueUsd == null ? '?' : money(p.valueUsd)]) cell(row, value);
+            for (const value of [p.chain, p.protocol, p.pendingWithdrawal ? 'withdrawal pending' : p.type, p.symbol, p.amount, p.valueUsd == null ? '?' : money(p.valueUsd)]) cell(row, value);
             row.children[5].title = p.priceSource ? `Estimated value · ${p.priceSource}` : p.valueUsd == null ? 'Price unavailable; not a zero balance' : 'Provider estimate';
             row.title = `Wallet: ${p.wallet}\nContract: ${p.vaultAddress || 'unknown'}\nGroup: ${p.groupId}`;
             const action = cell(row, '');
-            if (!p.withdrawalReason && ['deposit', 'staked', 'locked', 'reward'].includes(p.type) && /^0x[\da-f]{40}$/i.test(p.vaultAddress || '') && /^0x[\da-f]{40}$/i.test(p.assetAddress || '')) {
-                const button = document.createElement('button'); button.textContent = p.type === 'reward' ? p.protocol === 'LayerBank' ? 'Check unlocked rewards' : 'Check claim' : 'Check withdrawal'; button.title = withdrawalBlockReason(p.accountId); button.disabled = !!button.title;
+            if (!p.withdrawalReason && p.type !== 'loan' && /^0x[\da-f]{40}$/i.test(p.vaultAddress || '')) {
+                const button = document.createElement('button'); button.textContent = p.pendingWithdrawal ? 'Check pending withdrawal' : p.type === 'reward' || p.type === 'vesting' ? p.protocol === 'LayerBank' ? 'Check unlocked rewards' : 'Check claim' : 'Check withdrawal'; button.title = withdrawalBlockReason(p.accountId); button.disabled = !!button.title;
                 button.onclick = () => withdraw(p); action.append(button);
+                if (p.pendingWithdrawal && p.protocol === 'GMX V2') {
+                    const cancel = document.createElement('button'); cancel.textContent = 'Cancel request';
+                    cancel.title = 'Preview cancellation of the pending request and return GM tokens after the protocol delay.';
+                    cancel.disabled = button.disabled; cancel.onclick = () => withdraw(p, 'cancel'); action.append(cancel);
+                }
             } else {
                 action.textContent = 'Unavailable · details'; action.title = p.withdrawalReason || 'No automatic adapter for this position';
                 action.tabIndex = 0; action.setAttribute('role', 'button'); action.style.cursor = 'help';
@@ -308,10 +316,10 @@
         const digits = q.amountRaw.padStart(q.decimals + 1, '0');
         return (q.decimals ? digits.slice(0, -q.decimals) + '.' + digits.slice(-q.decimals) : digits) + ' ' + q.symbol;
     };
-    async function withdraw(position) {
+    async function withdraw(position, action = 'withdraw') {
         busy = true; message = 'Checking withdrawal and fee…'; render();
         try {
-            const plan = await api('withdraw/preview', { accountId: position.accountId, positionId: position.id, gasBoostPercent: gas() });
+            const plan = await api('withdraw/preview', { accountId: position.accountId, positionId: position.id, gasBoostPercent: gas(), action });
             const q = plan.quote;
             if (await confirmBatch({ targets: [{ position, quote: q }], skipped: [], accounts: 1,
                 totalUsd: q.valueUsd, feeUsd: q.feeUsd, gasBoostPercent: gas() }, true, () => api('withdraw/execute', plan.planId))) {
@@ -330,12 +338,18 @@
         el('defiPreviewRows').replaceChildren();
         if (single) {
             const { position: p, quote: q } = plan.targets[0];
-            if (p.type === 'reward') {
-                el('defiPreviewTitle').textContent = p.protocol === 'LayerBank' ? 'Confirm unlocked reward withdrawal' : 'Confirm reward claim';
-                el('defiPreviewNote').textContent = p.protocol === 'LayerBank' ? 'Only unlocked LAB.s returns to this wallet. Unclaimed rewards are not locked; no early-exit penalty is accepted.' : 'Rewards return to this wallet. The JOE stake is retained.';
+            if (q.stage === 'request') {
+                el('defiPreviewTitle').textContent = 'Confirm withdrawal request';
+                el('defiPreviewNote').textContent = q.notice || 'This starts the protocol withdrawal queue. Tokens arrive after its waiting period and a separate claim.';
             }
+            if (q.stage === 'cancel') el('defiPreviewTitle').textContent = 'Confirm request cancellation';
+            if (p.type === 'reward' && q.stage !== 'request') {
+                el('defiPreviewTitle').textContent = p.protocol === 'LayerBank' ? 'Confirm unlocked reward withdrawal' : 'Confirm reward claim';
+                el('defiPreviewNote').textContent = p.protocol === 'LayerBank' ? 'Only unlocked LAB.s returns to this wallet. Unclaimed rewards are not locked; no early-exit penalty is accepted.' : 'Claimable rewards return to this wallet.';
+            }
+            if (q.notice) el('defiPreviewNote').textContent = q.notice;
             el('defiPreviewSummary').textContent = `Account #${p.accountId} · ${p.chain} · ${p.protocol}`;
-            for (const [label, value] of [['Wallet', p.wallet], ['Receive', quoteAmount(q)], ['Output value', money(q.valueUsd)],
+            for (const [label, value] of [['Wallet', p.wallet], [q.stage === 'request' ? 'Future claim' : 'Receive', quoteAmount(q)], ['Output value', money(q.valueUsd)],
                 ['Total network fee', money(q.feeUsd)], ...(q.l1FeeUsd ? [[p.chain === 'op' ? 'L1 / operator reserve' : 'Included L1 fee reserve', money(q.l1FeeUsd)]] : []), ['Gas boost', `+${plan.gasBoostPercent}%`]]) {
                 const row = document.createElement('div'); row.className = 'defi-quote-field';
                 const name = document.createElement('span'), amount = document.createElement('strong');
@@ -343,14 +357,14 @@
             }
             if (q.approval || q.outputs?.length) {
                 const note = document.createElement('p');
-                note.textContent = (q.approval ? 'LP approval required: approval itself spends gas. Total fee includes approval and withdrawal gas reserve. The withdrawal is simulated again after approval. ' : '') +
-                    (q.outputs?.length ? 'Shown token amounts are protected minimum outputs.' : '');
+                note.textContent = (q.approval ? `Required steps: ${(q.approvals || [q.approval]).map(step => step.purpose || 'approval').join(' → ')} → ${q.stage === 'request' ? 'request' : 'withdrawal'}. Total fee includes every step; the transaction is simulated again after these steps. ` : '') +
+                    (q.outputs?.length ? q.stage === 'request' ? 'Future token amounts are protocol estimates. This transaction starts the queue; it does not immediately return these tokens.' : 'Shown token amounts are estimates from the current simulation; the transaction is checked again before sending.' : '');
                 el('defiPreviewRows').append(note);
             }
         }
         for (const target of single ? [] : plan.targets) {
             const line = document.createElement('div');
-            line.textContent = `#${target.position.accountId} · ${target.position.chain} · ${target.position.protocol} · ${quoteAmount(target.quote)} · fee $${Number(target.quote.feeUsd).toFixed(4)}${target.quote.approval ? ' · LP approval + withdrawal gas reserve; approval spends gas, followed by withdrawal simulation' : ''}${target.quote.outputs?.length ? ' · protected minimum outputs' : ''}`;
+            line.textContent = `#${target.position.accountId} · ${target.position.chain} · ${target.position.protocol} · ${quoteAmount(target.quote)} · fee $${Number(target.quote.feeUsd).toFixed(4)}${target.quote.approval ? ' · approval + withdrawal gas reserve' : ''}${target.quote.notice ? ' · ' + target.quote.notice : ''}`;
             el('defiPreviewRows').append(line);
         }
         for (const skipped of plan.skipped) {

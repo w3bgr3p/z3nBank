@@ -10,13 +10,26 @@ public static class DefiLending
     {
         [1] = "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2",
         [137] = "0x794a61358d6845594f94dc1db02a252b5b4814ad",
+        [8453] = "0xa238dd80c259a72e81d7e4664a9801593f98d1c5",
+        [1088] = "0x90df02551bb792286e8d4f13e0e357b4bf1d6a57",
+        [100] = "0xb50201558b00496a145fe76f7424749556e326d8",
         [534352] = "0x11fCfe756c05AD438e312a7fd934381537D3cFfe"
     };
     private const string Abi = "[{\"type\":\"function\",\"name\":\"withdraw\",\"inputs\":[{\"type\":\"address\"},{\"type\":\"uint256\"},{\"type\":\"address\"}],\"outputs\":[{\"type\":\"uint256\"}],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"getUserAccountData\",\"inputs\":[{\"type\":\"address\"}],\"outputs\":[{\"type\":\"uint256\"},{\"type\":\"uint256\"},{\"type\":\"uint256\"},{\"type\":\"uint256\"},{\"type\":\"uint256\"},{\"type\":\"uint256\"}],\"stateMutability\":\"view\"}]";
     public static bool IsAave(DefiPosition p)
     {
-        if (p.Protocol != "Aave V3") return false;
-        try { return Pools.TryGetValue(Rpc.ChainId(p.Chain), out var pool) && string.Equals(pool, p.VaultAddress, StringComparison.OrdinalIgnoreCase); }
+        if (p.Type != "deposit") return false;
+        try {
+            var id = Rpc.ChainId(p.Chain);
+            var pool = p.Protocol switch {
+                "Aave V3" => Pools.GetValueOrDefault(id),
+                "Aave" when id == 137 => "0x8dff5e27ea6b7ac08ebfdf9eb090f32ee9a30fcf",
+                "Seamless Protocol" when id == 8453 => "0x8f44fd754285aa6a2b8b9b97739b79746e0475a7",
+                "Hana Finance" when id == 167000 => "0x4ab85bf9ea548410023b25a13031e91b4c4f3b91",
+                _ => null
+            };
+            return pool != null && pool.Equals(p.VaultAddress, StringComparison.OrdinalIgnoreCase);
+        }
         catch (ArgumentException) { return false; }
     }
     public static BigInteger Word(string data, int index)

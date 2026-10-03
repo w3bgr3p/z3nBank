@@ -73,22 +73,18 @@ as [Rabby's own DappActions UI](https://github.com/RabbyHub/Rabby/blob/develop/s
 It checks the RPC network, destination and address arguments, simulates through RPC and Rabby's free
 `pre_exec_tx` endpoint, and prices the exact simulated raw outputs before confirmation. The same checks run
 again before signing. Base includes OP Stack data/operator fees; Taiko uses its transaction gas estimate.
-This supports simple direct actions such as Seamless on Base and Hana Finance on Taiko without separate
-protocol adapters. Opening an account dialog refreshes legacy snapshots that predate action discovery, without
+Verified lending adapters also handle Seamless on Base and Hana Finance on Taiko. Opening an account dialog refreshes legacy snapshots that predate action discovery, without
 rescanning every wallet. Shared actions are deduplicated in batches.
 Hover a DeFi network cell, account total or wallet address for a Treasury-style preview of protocols, token
 amounts and valuations. Click to open the account dialog with withdrawal actions.
-Proxy-held positions, approval sequences, ambiguous actions, unsupported ABI types and queued exits remain
-blocked with a reason. A missing action is not permission to guess calldata: GMX V2 and Hana Network currently
-return empty action lists for the observed positions and still require protocol-specific exits.
-
-Without an available Rabby action, PancakeSwap V3, Curve, Merkl and Hana positions are not offered ERC-4626 withdrawal checks.
-Their details explain the required NFT exit, pool exit, reward proof or lending adapter. Stargate LP/farm exits
-and Compound reward claims also remain unsupported; STG escrow withdrawal and supplied Compound assets
-have separate verified paths.
+Proxy-held positions and ambiguous actions remain blocked with a reason. Required approvals use exact amounts,
+include every step's fee, and are simulated as a sequence before confirmation. A missing Rabby action does not
+imply that a contract is ERC-4626: verified protocol adapters handle the observed portfolio's lending, staking,
+LP, reward, vesting and queue routes. See [protocol coverage](docs/defi-protocol-coverage.md) for deployments,
+queue behavior and limitations. Discovery remains broader than execution support.
 
 For positions without a Rabby action or a built-in adapter, **Check withdrawal** attempts a direct synchronous [ERC-4626](https://eips.ethereum.org/EIPS/eip-4626) withdrawal.
-Supported fee paths include Ethereum, BSC, Gnosis, Polygon, Avalanche, Blast, Optimism, Arbitrum, zkSync Era, Scroll, Base and Taiko. The contract must expose the matching underlying asset
+Supported fee paths include Ethereum, BSC, Gnosis, Polygon, Avalanche, Blast, Optimism, Arbitrum, zkSync Era, Scroll, Base, Taiko, Metis, Mode, Manta and Linea. The contract must expose the matching underlying asset
 and a positive `maxWithdraw(owner)`. The app simulates the exact withdrawal, checks gas and fresh asset prices,
 shows a preview, and requires explicit confirmation. It withdraws the displayed underlying amount to the same wallet;
 it does not swap the result to native currency. The selected Gas +% applies. The fee must be below the output value.
@@ -151,9 +147,9 @@ LayerBank's verified Scroll Core uses `redeemToken(market, shares)` for ETH/USDC
 underlying/core identity checks, debt protection and read-only simulation. An empty market reports unavailable
 protocol liquidity rather than a generic contract error. Scroll LAB.s rewards with missing provider prices use a cached
 free LI.FI token price, shown as an estimate. Failure to obtain a price preserves the amount and unknown valuation.
-The verified LayerBank reward controller supports withdrawal of unlocked rewards only. Checks read the live unlocked
-balance; they never start vesting or accept an early-exit penalty. Accrued rewards that require claiming into vesting
-remain a separate flow. Reward withdrawals retain the same fresh simulation and fee/output guards as deposits.
+The verified LayerBank reward controller withdraws unlocked rewards without an early-exit penalty. When only
+unclaimed rewards exist, preview offers a separate claim into vesting and clearly states its duration and future
+claim stage. Both stages retain the same fresh simulation and fee/output guards as deposits.
 Scroll fees query the official L1 oracle with a full-size RLP signature reserve (no signing), plus a 25% L1 fee buffer.
 Sources: [LayerBank contracts/deployments](https://github.com/layerbank-foundation/v2-contracts),
 [Aave Scroll address book](https://github.com/aave-dao/aave-address-book/blob/main/src/AaveV3Scroll.sol),
@@ -167,13 +163,14 @@ errors are shown inside the confirmation and logged to the shared drawer. Confir
 to prevent duplicate requests; after acceptance the normal operation status and logs show progress.
 Cancel, Escape or clicking outside the dialog before submitting does not execute the prepared withdrawal.
 
-Unverified Blackwing vaults, SyncSwap stable/staked pools and Balancer liquidity still require dedicated adapters.
+Unverified Blackwing vaults and SyncSwap stable/staked pools still require dedicated adapters.
 Click **Adapter unavailable · details** for the reason; these positions are not sent to ERC-4626 methods.
 
-This is not universal unstaking. LP exits, staking farms, collateral withdrawal, claim rewards and asynchronous withdrawal queues
-need separate adapters. Other L2 automatic withdrawals remain blocked until their additional fees are supported.
+This is not universal unstaking. Only verified deployments and available Rabby actions are executed.
 [Enso withdrawal routes](https://docs.enso.build/pages/use-cases/deposits/withdrawal) are a possible further adapter,
-but are not implemented in this version. [Lido](https://docs.lido.fi/contracts/withdrawal-queue-erc721/) requires separate request/claim stages.
+but are not implemented in this version. Lido, Stader and Sonne support request/wait/claim stages; GMX V2 supports
+keeper withdrawal requests and separately confirmed cancellation. Saved requests survive restarting, are checked
+on account refresh, and never automatically resume signing or broadcasting.
 Coverage of discovery does not imply coverage of execution. The scanner uses the
 [Rabby complex protocol API](https://github.com/RabbyHub/rabby-api/blob/main/src/index.ts).
 

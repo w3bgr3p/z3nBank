@@ -5,10 +5,79 @@ using z3n;
 using System.Globalization;
 using System.Net;
 
+if (args.Length == 2 && args[0] == "--defi-live-coverage")
+{
+    var folder = args[1];
+    var rows = JsonConvert.DeserializeObject<List<DefiPosition>>(File.ReadAllText(Path.Combine(folder, "defi-coverage-positions.json")))!;
+    var report = new List<object>();
+    foreach (var group in rows.Where(p => p.Type != "loan").GroupBy(p => (p.Protocol, p.Chain, p.VaultAddress, p.AdapterId, p.Type))) {
+        var p = group.OrderByDescending(p => p.ValueUsd ?? 0).First();
+        string result;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        try {
+            var unavailable = DefiWithdrawal.Unavailable(p);
+            if (unavailable != null) throw new InvalidOperationException(unavailable);
+            var network = DefiVault.Network(p.Chain);
+            DefiVault.Quote? quote = null;
+            await SwapExecution.Run(timeout.Token, async () => quote = await DefiWithdrawal.Prepare(new Nethereum.Web3.Web3(network.Rpc), network.ChainId, p, 20), 20);
+            result = $"PREVIEW OK: {quote!.Stage}; output ${quote.ValueUsd:0.########}; fee ${quote.FeeUsd:0.########}";
+        } catch (Exception ex) { result = SwapExecution.ErrorDetails(ex); }
+        report.Add(new { p.Protocol, p.Chain, p.AdapterId, p.Type, result, signed = false, broadcast = false });
+        File.WriteAllText(Path.Combine(folder, "defi-live-coverage-report.json"), JsonConvert.SerializeObject(report, Formatting.Indented));
+        Console.WriteLine($"{report.Count}: {p.Protocol} | {p.Chain} | {p.Type} | {result}");
+    }
+    return;
+}
+
+if (args.Length >= 4 && args[0] is "--contract-read" or "--contract-read-from")
+{
+    int offset = args[0] == "--contract-read-from" ? 1 : 0;
+    var web3 = new Nethereum.Web3.Web3(Rpc.Get(args[1 + offset]));
+    var tx = DefiActionAbi.Build(offset == 1 ? args[1] : "0x0000000000000000000000000000000000000000", args[2 + offset], args[3 + offset], args.Skip(4 + offset).ToArray());
+    try { Console.WriteLine(await web3.Eth.Transactions.Call.SendRequestAsync(tx)); }
+    catch (Nethereum.JsonRpc.Client.RpcResponseException ex) { Console.WriteLine(ex.Message + " | " + ex.RpcError.Data); Environment.ExitCode = 1; }
+    return;
+}
+if (args.Length == 3 && args[0] == "--implementation-read")
+{
+    var web3 = new Nethereum.Web3.Web3(Rpc.Get(args[1]));
+    Console.WriteLine(await web3.Eth.GetStorageAt.SendRequestAsync(args[2],
+        new Nethereum.Hex.HexTypes.HexBigInteger("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")));
+    return;
+}
+
+if (args.Length == 2 && args[0] == "--defi-coverage")
+{
+    var folder = args[1];
+    var old = JObject.Parse(File.ReadAllText(Path.Combine(folder, "defi-coverage-status.json")))["positions"]!.ToObject<DefiPosition[]>()!;
+    var report = new List<object>();
+    var inspected = new List<DefiPosition>();
+    foreach (var file in Directory.GetFiles(folder, "rabby-coverage-*.json")) {
+        var id = int.Parse(Path.GetFileNameWithoutExtension(file).Split('-').Last());
+        var coverageWallet = old.First(p => p.AccountId == id).Wallet;
+        var rows = DefiPositionsClient.Parse(DefiPositionsClient.ParseJson(File.ReadAllText(file)), id, coverageWallet);
+        inspected.AddRange(rows);
+        foreach (var row in rows) {
+            string? reason = DefiWithdrawal.Unavailable(row);
+            if (DefiWithdrawal.UsesRabby(row) && reason == null) {
+                try { DefiRabbyActions.Build(row); }
+                catch (Exception ex) { reason = ex.Message; }
+            }
+            report.Add(new { row.AccountId, row.Protocol, row.Chain, row.Type, row.AdapterId, row.VaultAddress, row.GroupId, row.AssetAddress, ready = reason == null, reason });
+        }
+    }
+    var json = JArray.FromObject(report); File.WriteAllText(Path.Combine(folder, "defi-coverage-report.json"), json.ToString());
+    File.WriteAllText(Path.Combine(folder, "defi-coverage-positions.json"), JsonConvert.SerializeObject(inspected));
+    foreach (var group in json.OfType<JObject>().Where(p => (bool?)p["ready"] != true).GroupBy(p => $"{p["Protocol"]} | {p["Chain"]} | {p["Type"]} | {p["reason"]}")) Console.WriteLine($"{group.Count()} BLOCKED: {group.Key}");
+    Console.WriteLine($"Static coverage: {json.Count(p => (bool?)p["ready"] == true)}/{json.Count} position assets. This is not RPC or execution verification.");
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--rabby-actions")
 {
     var errors = 0;
     await RabbyActionChecks.Run((name, passed) => { Console.WriteLine($"{(passed ? "PASS" : "FAIL")}: {name}"); if (!passed) errors++; });
+    await DefiQueueChecks.Run((name, passed) => { Console.WriteLine($"{(passed ? "PASS" : "FAIL")}: {name}"); if (!passed) errors++; });
     Environment.ExitCode = errors == 0 ? 0 : 1;
     return;
 }

@@ -49,8 +49,6 @@ public partial class TreasuryController
                 var positionLog = new Logger(true, acc: p.AccountId.ToString());
                 try
                 {
-                    if ((p.Type is not ("deposit" or "staked") && p.WithdrawActions.Length == 0 && !DefiStargate.IsSupported(p) && !DefiJoe.IsSupported(p) && !DefiLayerBankRewards.IsSupported(p)) || !DefiVault.AddressValid(p.VaultAddress) || !DefiVault.AddressValid(p.AssetAddress))
-                        throw new InvalidOperationException("Withdrawal adapter unavailable for this position");
                     var unavailable = DefiWithdrawal.Unavailable(p);
                     if (unavailable != null) throw new InvalidOperationException(unavailable);
                     var network = DefiVault.Network(p.Chain); DefiVault.Quote? quote = null;
@@ -118,7 +116,8 @@ public partial class TreasuryController
                             try
                             {
                                 var hash = await ExecuteDefiPosition(target, pin);
-                                lock (DefiLock) DefiBatchResults.Add(new { target.Position.AccountId, target.Position.Chain, status = "confirmed", hash });
+                                lock (DefiLock) DefiBatchResults.Add(new { target.Position.AccountId, target.Position.Chain,
+                                    status = target.Quote.Stage == "request" ? "request confirmed; waiting for protocol" : "confirmed", hash, notice = target.Quote.Notice });
                             }
                             catch (ReceiptUnavailableException ex)
                             {
@@ -162,35 +161,42 @@ public partial class TreasuryController
         var log = new Logger(true, acc: p.AccountId.ToString()); var web3 = new Web3(account, network.Rpc);
         log.Send($"DeFi withdrawal started | {p.Protocol} | {p.Chain} | {p.Symbol}");
         var exact = plan.Quote.InputAmountRaw ?? plan.Quote.AmountRaw;
-        var quote = await DefiWithdrawal.Prepare(web3, network.ChainId, p, plan.GasPercent, exact);
+        var quote = await DefiWithdrawal.Prepare(web3, network.ChainId, p, plan.GasPercent, exact, action: plan.Action);
         DefiVault.ValidateRecheck(plan.Quote, quote);
         if (quote.Approval != null)
         {
-            var approvalWei = System.Numerics.BigInteger.Parse(quote.Approval.Gas) * System.Numerics.BigInteger.Parse(quote.Approval.GasPrice);
+            var approvalSteps = quote.Approvals?.Count > 0 ? quote.Approvals : new List<DefiVault.Approval> { quote.Approval };
+            var approvalWei = approvalSteps.Aggregate(System.Numerics.BigInteger.Zero, (sum, step) => sum + step.FeeWei);
             var approvalBudget = quote.FeeUsd * (decimal)approvalWei /
-                (decimal)(System.Numerics.BigInteger.Parse(quote.Gas) * System.Numerics.BigInteger.Parse(quote.GasPrice) + approvalWei);
-            SwapExecution.Check(); lock (DefiLock) InvalidateDefiAccount(p.AccountId);
-            var approval = quote.Approval;
-            var approvalHash = await TransactionBroadcast.SendAsync(web3, new Nethereum.RPC.Eth.DTOs.TransactionInput {
-                From = p.Wallet, To = approval.Destination, Data = approval.Data, Value = new Nethereum.Hex.HexTypes.HexBigInteger(0),
-                Gas = new Nethereum.Hex.HexTypes.HexBigInteger(approval.Gas), GasPrice = new Nethereum.Hex.HexTypes.HexBigInteger(approval.GasPrice)
-            }, network.ChainId, log);
-            lock (DefiLock) _defiExitResult = $"LP approval broadcast: {approvalHash}";
-            var approvalReceipt = await ReceiptWaiter.WaitAsync(() => web3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(approvalHash),
-                approvalHash, log, fallback: ReceiptWaiter.Fallback(network.ChainId, approvalHash));
-            if (approvalReceipt.Status?.Value != 1) throw new InvalidOperationException($"LP approval reverted. TX: {approvalHash}");
-            lock (DefiLock) _defiExitResult = $"LP approval confirmed: {approvalHash}; withdrawal not yet broadcast";
-            log.Send($"LP approval confirmed | TX: {approvalHash}", "SUCCESS");
+                (decimal)(quote.TotalFeeWei != null ? System.Numerics.BigInteger.Parse(quote.TotalFeeWei) :
+                    System.Numerics.BigInteger.Parse(quote.Gas) * System.Numerics.BigInteger.Parse(quote.GasPrice) + approvalWei);
+            var approvalHash = "";
+            foreach (var approval in approvalSteps) {
+                SwapExecution.Check(); lock (DefiLock) InvalidateDefiAccount(p.AccountId);
+                approvalHash = await TransactionBroadcast.SendAsync(web3, new Nethereum.RPC.Eth.DTOs.TransactionInput {
+                    From = p.Wallet, To = approval.Destination, Data = approval.Data, Value = new Nethereum.Hex.HexTypes.HexBigInteger(0),
+                    Gas = new Nethereum.Hex.HexTypes.HexBigInteger(approval.Gas), GasPrice = new Nethereum.Hex.HexTypes.HexBigInteger(approval.GasPrice)
+                }, network.ChainId, log);
+                lock (DefiLock) _defiExitResult = $"{approval.Purpose} broadcast: {approvalHash}";
+                var approvalReceipt = await ReceiptWaiter.WaitAsync(() => web3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(approvalHash),
+                    approvalHash, log, fallback: ReceiptWaiter.Fallback(network.ChainId, approvalHash));
+                if (approvalReceipt.Status?.Value != 1) throw new InvalidOperationException($"{approval.Purpose} reverted. TX: {approvalHash}");
+                lock (DefiLock) {
+                    _defiExitResult = $"{approval.Purpose} confirmed: {approvalHash}; withdrawal not yet broadcast";
+                    if (approval.Purpose != "approval") { PendingDefiWithdrawals[PendingKey(p)] = p with { PendingWithdrawal = true }; SaveDefiProgress(); }
+                }
+                log.Send($"{approval.Purpose} confirmed | TX: {approvalHash}", "SUCCESS");
+            }
             SwapExecution.Check();
             try
             {
-                quote = await DefiWithdrawal.Prepare(web3, network.ChainId, p, plan.GasPercent, exact);
+                quote = await DefiWithdrawal.Prepare(web3, network.ChainId, p, plan.GasPercent, exact, action: plan.Action);
                 if (quote.Approval != null || quote.RequiresApprovalSimulation)
-                    throw new InvalidOperationException("LP approval was not effective; preview again");
+                    throw new InvalidOperationException("Approval was not effective; preview again");
                 DefiVault.ValidateRecheck(plan.Quote, quote, approvalBudget);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
-            { throw new InvalidOperationException($"LP approval confirmed: {approvalHash}. Withdrawal stopped; LP remains in wallet. " + SwapExecution.ErrorDetails(ex), ex); }
+            { throw new InvalidOperationException($"Approval confirmed: {approvalHash}. Withdrawal stopped; position remains in wallet. " + SwapExecution.ErrorDetails(ex), ex); }
         }
         SwapExecution.Check();
         lock (DefiLock) InvalidateDefiAccount(p.AccountId);
@@ -199,7 +205,15 @@ public partial class TreasuryController
         var receipt = await ReceiptWaiter.WaitAsync(() => web3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(hash),
             hash, log, fallback: ReceiptWaiter.Fallback(network.ChainId, hash));
         if (receipt.Status?.Value != 1) throw new InvalidOperationException($"Withdrawal reverted. TX: {hash}");
-        log.Send($"DeFi withdrawal confirmed | {p.Protocol} | TX: {hash}", "SUCCESS");
+        lock (DefiLock) {
+            if (quote.Stage == "request") PendingDefiWithdrawals[PendingKey(p)] = p with {
+                PendingWithdrawal = true, Symbol = quote.Symbol,
+                Amount = PendingAmount(quote),
+                ValueUsd = quote.ValueUsd, WithdrawActions = [] };
+            else if (quote.CompletesPending) PendingDefiWithdrawals.Remove(PendingKey(p));
+            SaveDefiProgress();
+        }
+        log.Send($"DeFi {quote.Stage} confirmed | {p.Protocol} | TX: {hash}" + (quote.Notice == null ? "" : " | " + quote.Notice), "SUCCESS");
         return hash;
     }
 }

@@ -42,6 +42,10 @@ internal static class RabbyActionChecks
         var fresh = await DefiRabbyActions.Prepare(web3, 167000, p, 0, quote.InputAmountRaw, http, http);
         DefiVault.ValidateRecheck(quote, fresh);
         check("Execution can recheck the exact confirmed action without trusting indexed amounts", fresh.Data == quote.Data && api.Simulations == 2);
+        tx.Value = new Nethereum.Hex.HexTypes.HexBigInteger(BigInteger.Parse("100000000000000"));
+        var paidRequest = await DefiVault.PrepareTransaction(web3, 167000, Asset, BigInteger.Parse("2000000000000000000"), tx, 0, http);
+        check("Native keeper payment is included exactly once in the fee guard and broadcast value", paidRequest.FeeUsd == .42m &&
+            paidRequest.TotalFeeWei == "210000000000000" && DefiVault.Transaction(paidRequest, Pool, Wallet).Value.Value == tx.Value.Value);
         p.WithdrawActions[0].Parameters![2] = "0x4444444444444444444444444444444444444444";
         blocked = false; try { await DefiRabbyActions.Prepare(web3, 167000, p, 0, prices: http, simulationClient: http); } catch (InvalidDataException) { blocked = true; }
         check("A foreign wallet recipient is rejected before simulation or signing", blocked && api.Simulations == 2);

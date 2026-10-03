@@ -13,7 +13,7 @@ public sealed class RabbyWithdrawAction
     [JsonProperty("type")] public string Type { get; set; } = "";
     [JsonProperty("contract_id")] public string Contract { get; set; } = "";
     [JsonProperty("func")] public string Function { get; set; } = "";
-    [JsonProperty("str_params")] public string[]? Parameters { get; set; }
+    [JsonProperty("str_params"), JsonConverter(typeof(RabbyParametersConverter))] public string[]? Parameters { get; set; }
     [JsonProperty("need_approve")] public JObject? Approval { get; set; }
 }
 
@@ -26,7 +26,7 @@ public static class DefiRabbyActions
     public static RabbyWithdrawAction Select(DefiPosition p)
     {
         if (p.HasProxy) throw new InvalidDataException("Rabby hides automatic actions for proxy-held positions; use the proxy protocol's exit");
-        var candidates = p.WithdrawActions.Where(a => a.Type == (p.Type == "reward" ? "claim" : "withdraw")).ToArray();
+        var candidates = p.WithdrawActions.Where(a => a.Type == (p.Type is "reward" or "vesting" ? "claim" : "withdraw")).ToArray();
         var exact = candidates.Where(a => a.Parameters?.Contains(p.AssetAddress, StringComparer.OrdinalIgnoreCase) == true).ToArray();
         if (exact.Length == 1) return exact[0];
         if (candidates.Length != 1) throw new InvalidDataException("No unique Rabby withdrawal/claim action for this asset; queue or multi-step exits need separate handling");
@@ -36,15 +36,14 @@ public static class DefiRabbyActions
     public static TransactionInput Build(DefiPosition p)
     {
         var action = Select(p);
-        if (!DefiVault.AddressValid(action.Contract) || !action.Contract.Equals(p.VaultAddress, StringComparison.OrdinalIgnoreCase))
+        if (!DefiVault.AddressValid(action.Contract) || !DefiActionTrust.Destination(p, action))
             throw new InvalidDataException("Rabby action destination does not match the position contract");
-        if (action.Approval?["to"] != null) throw new InvalidDataException("Rabby action requires an approval sequence; this action is not yet executable automatically");
+        if (action.Approval?["to"] is { } spender && !DefiActionTrust.Approval(p.Chain, spender.ToString()))
+            throw new InvalidDataException("Rabby approval spender is not in the verified action route list");
         var (name, types) = Signature(action.Function);
         var parameters = action.Parameters ?? (types.Length == 0 ? [] : throw new InvalidDataException("Rabby action is missing exact str_params"));
         if (parameters.Length != types.Length) throw new InvalidDataException("Rabby action parameter count mismatch");
-        var values = types.Select((type, i) => Parameter(type, parameters[i])).ToArray();
-        return new Web3().Eth.GetContract(DefiBlackwing.Abi((name, types, [])), action.Contract)
-            .GetFunction(name).CreateTransactionInput(p.Wallet, values);
+        return DefiActionAbi.Build(p.Wallet, action.Contract, action.Function, parameters);
     }
 
     public static string? Unavailable(DefiPosition p)
@@ -55,10 +54,9 @@ public static class DefiRabbyActions
 
     public static (string Name, string[] Types) Signature(string signature)
     {
-        var match = Regex.Match(signature.Trim(), @"^(?:function\s+)?([A-Za-z_]\w*)\(([^()]*)\)(?:\([^()]*\))?$");
-        if (!match.Success || Blocked.Contains(match.Groups[1].Value)) throw new InvalidDataException("Unsupported or unsafe Rabby action signature");
-        var types = match.Groups[2].Value.Length == 0 ? [] : match.Groups[2].Value.Split(',').Select(t => t.Trim()).ToArray();
-        return (match.Groups[1].Value, types);
+        var parsed = DefiActionAbi.Signature(signature);
+        if (Blocked.Contains(parsed.Name)) throw new InvalidDataException("Unsupported or unsafe Rabby action signature");
+        return parsed;
     }
 
     public static object Parameter(string type, string value)
@@ -108,31 +106,57 @@ public static class DefiRabbyActions
     {
         if ((await SwapExecution.Read(web3.Eth.ChainId.SendRequestAsync())).Value != chainId || Rpc.ChainId(p.Chain) != chainId)
             throw new InvalidDataException("Rabby action RPC chain mismatch");
-        if (p.DebtUsd > 0) throw new InvalidOperationException("This position has active debt. Automatic withdrawal is blocked to protect collateral.");
+        if (p.DebtUsd > 0 && p.Type is not ("reward" or "vesting")) throw new InvalidOperationException("This position has active debt. Automatic withdrawal is blocked to protect collateral.");
         var tx = Build(p);
         var fingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Convert.FromHexString(tx.Data[2..])));
         if (exact != null && exact != fingerprint) throw new InvalidDataException("Rabby action parameters changed; preview again");
         // Address arguments may identify the owner/receiver or token, never another EOA.
         var action = Select(p); var (_, types) = Signature(action.Function);
         for (var i = 0; i < types.Length; i++) {
-            if (types[i] is not ("address" or "address[]")) continue;
-            var addresses = types[i] == "address" ? new[] { action.Parameters![i] } : JArray.Parse(action.Parameters![i]).Select(v => v.ToString()).ToArray();
-            foreach (var address in addresses) {
+            foreach (var address in DefiActionAbi.Addresses(types[i], action.Parameters![i])) {
             if (address.Equals(p.Wallet, StringComparison.OrdinalIgnoreCase) || TokenSelection.IsNative(address)) continue;
             var code = await SwapExecution.Read(web3.Eth.GetCode.SendRequestAsync(address));
             if (string.IsNullOrWhiteSpace(code) || code == "0x") throw new InvalidDataException("Rabby action contains a different wallet recipient");
             }
         }
-        await SwapExecution.Read(web3.Eth.Transactions.Call.SendRequestAsync(tx));
+        return await PrepareBuilt(web3, chainId, p, gasPercent, tx, fingerprint, prices, simulationClient, action);
+    }
+
+    // Only protocol adapters that verify their contracts, recipients and live inputs call this path.
+    internal static async Task<DefiVault.Quote> PrepareBuilt(Web3 web3, int chainId, DefiPosition p, decimal gasPercent,
+        TransactionInput tx, string fingerprint, HttpClient? prices = null, HttpClient? simulationClient = null,
+        RabbyWithdrawAction? action = null, IReadOnlyList<(string Asset, BigInteger Amount)>? futureOutputs = null,
+        IReadOnlyList<DefiVault.Approval>? preparedSteps = null, IReadOnlyDictionary<string, JObject>? verifiedPrices = null)
+    {
+        if ((await SwapExecution.Read(web3.Eth.ChainId.SendRequestAsync())).Value != chainId || Rpc.ChainId(p.Chain) != chainId)
+            throw new InvalidDataException("Withdrawal RPC chain mismatch");
+        if (p.HasProxy || p.DebtUsd > 0 && p.Type is not ("reward" or "vesting")) throw new InvalidOperationException("Proxy ownership or active debt prevents automatic withdrawal");
+        var approvals = preparedSteps?.ToList() ?? (action == null ? new List<DefiVault.Approval>() : await DefiActionApprovals.Prepare(web3, chainId, p, action, gasPercent));
+        if (approvals.Count == 0) await SwapExecution.Read(web3.Eth.Transactions.Call.SendRequestAsync(tx));
         var nonce = await SwapExecution.Read(web3.Eth.Transactions.GetTransactionCount.SendRequestAsync(p.Wallet, BlockParameter.CreatePending()));
         using var owned = simulationClient == null ? new HttpClient { Timeout = TimeSpan.FromSeconds(30) } : null;
         var http = simulationClient ?? owned!;
-        var body = new { tx = new { chainId, from = p.Wallet, to = tx.To, data = tx.Data, value = "0x0", nonce = nonce.HexValue,
-            gas = "0x1000000", gasPrice = "0x0" }, user_addr = p.Wallet, origin = "z3nBank", update_nonce = true, pending_tx_list = Array.Empty<object>() };
+        var pending = approvals.Select((a, i) => new { chainId, from = p.Wallet, to = a.Destination, data = a.Data, value = "0x0",
+            nonce = new Nethereum.Hex.HexTypes.HexBigInteger(nonce.Value + i).HexValue,
+            gas = new Nethereum.Hex.HexTypes.HexBigInteger(BigInteger.Parse(a.Gas)).HexValue,
+            gasPrice = new Nethereum.Hex.HexTypes.HexBigInteger(BigInteger.Parse(a.GasPrice)).HexValue }).ToArray();
+        var body = new { tx = new { chainId, from = p.Wallet, to = tx.To, data = tx.Data, value = tx.Value?.HexValue ?? "0x0",
+            nonce = new Nethereum.Hex.HexTypes.HexBigInteger(nonce.Value + approvals.Count).HexValue,
+            gas = "0x1000000", gasPrice = "0x0" }, user_addr = p.Wallet, origin = "z3nBank", update_nonce = approvals.Count == 0, pending_tx_list = pending };
         using var response = await http.PostAsJsonAsync("https://api.rabby.io/v1/wallet/pre_exec_tx", body, SwapExecution.Token);
         response.EnsureSuccessStatusCode();
-        var outputs = Outputs((JObject)DefiPositionsClient.ParseJson(await response.Content.ReadAsStringAsync(SwapExecution.Token)), p.Chain);
-        var quote = await DefiVault.PrepareTransaction(web3, chainId, outputs[0].Asset, outputs[0].Amount, tx, gasPercent, prices, outputs);
+        var simulation = (JObject)DefiPositionsClient.ParseJson(await response.Content.ReadAsStringAsync(SwapExecution.Token));
+        if ((bool?)simulation["pre_exec"]?["success"] != true)
+            throw new InvalidOperationException("Withdrawal simulation failed: " + simulation["pre_exec"]?["error"]);
+        var outputs = futureOutputs?.ToList() ?? Outputs(simulation, p.Chain);
+        BigInteger? reserved = null;
+        if (approvals.Count > 0) {
+            if ((bool?)simulation["gas"]?["success"] != true || !BigInteger.TryParse((string?)simulation["gas"]?["gas_limit"], out var estimate) || estimate <= 0)
+                throw new InvalidOperationException("Rabby did not estimate the withdrawal after its approval sequence");
+            reserved = estimate;
+        }
+        var quote = await DefiVault.PrepareTransaction(web3, chainId, outputs[0].Asset, outputs[0].Amount, tx, gasPercent, prices, outputs,
+            reservedGas: reserved, approvals: approvals, verifiedPrices: verifiedPrices);
         return quote with { InputAmountRaw = fingerprint };
     }
 }
