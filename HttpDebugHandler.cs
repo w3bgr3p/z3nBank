@@ -1,9 +1,6 @@
-﻿using System;
-using System.Net.Http;
+﻿
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Linq;
+
 using Newtonsoft.Json;
 
 public class HttpDebugHandler : DelegatingHandler
