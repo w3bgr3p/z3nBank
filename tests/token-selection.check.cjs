@@ -27,18 +27,22 @@ const choices = ['Q', 'ETH', 'USDC'].map(symbol => ({ dataset: { symbol }, attri
 choices.forEach(row => row.classList.owner = row);
 let confirmed = false;
 let refreshed = 0;
+let skipOnly = false;
+const dialogs = [];
 const calls = [];
 const context = vm.createContext({ treasuryData, API_BASE: '/api/treasury', console, setTimeout,
     Option: class {}, formatUSD: value => `$${value}`, getSelectedChains: () => ['Ethereum', 'Base'], getGasBoostPercent: () => 2,
     refreshData: async () => { refreshed++; },
     document: { getElementById: id => elements[id], querySelectorAll: selector => selector.includes('token-choice') ? choices : selector.includes('treasury-account-id') || selector.includes('treasury-chain-choice') ? [] : cells,
         createElement: makeElement, addEventListener() {} },
-    Swal: { fire: async () => ({ isConfirmed: confirmed }) },
+    Swal: { fire: async options => { dialogs.push(options); return { isConfirmed: confirmed }; } },
     fetch: async (url, options) => {
         calls.push({ url, body: options.body && JSON.parse(options.body) });
         const data = url.endsWith('/preview') ? { planId: 'plan1', accounts: 2, totalUSD: 10, gasBoostPercent: 2,
             targets: [{ id: 1, chain: 'Ethereum', symbol: 'Q', address, valueUSD: 5 }] }
             : url.endsWith('/execute') ? { jobId: 'plan1' }
+            : skipOnly ? { jobId: 'plan1', running: false, total: 1, results: [
+                { id: 1, succeeded: 0, failed: 0, skipped: 1, skipReasons: [{ chain: 'Blast', symbol: 'WETH', reason: 'On-chain balance is zero' }] }] }
             : { jobId: 'plan1', running: false, total: 2, results: [
                 { id: 1, succeeded: 1, failed: 0, skipped: 0 }, { id: 2, succeeded: 1, failed: 0, skipped: 0 }] };
         return { ok: true, json: async () => data };
@@ -82,6 +86,12 @@ vm.runInContext(fs.readFileSync('wwwroot/tokens.js', 'utf8'), context);
     await vm.runInContext('swapSelectedToken()', context);
     assert.equal(calls.find(c => c.url.endsWith('/execute')).body, 'plan1');
     assert.equal(refreshed, 1);
+    skipOnly = true;
+    await vm.runInContext("pollTokenSwap('plan1')", context);
+    assert.equal(dialogs.at(-1).icon, 'warning', 'Zero swaps must never show green success');
+    assert.equal(dialogs.at(-1).title, 'No tokens swapped');
+    assert(dialogs.at(-1).text.includes('#1 · Blast · WETH: On-chain balance is zero'), 'The result explains each skipped position');
+    skipOnly = false;
     vm.runInContext("clearTreasuryTokens(); selectTreasuryToken('ETH')", context);
     assert(elements.swapSelectedTokenButton.disabled, 'Native token cannot be swapped to itself');
     vm.runInContext("clearTreasuryTokens()", context);

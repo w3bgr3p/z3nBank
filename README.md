@@ -9,6 +9,8 @@ Successful database connection settings are saved automatically in `%LOCALAPPDAT
 
 See [RPC audit](docs/RPC_AUDIT.md) for the latest endpoint checks and the repeatable read-only audit. Unichain uses mainnet ID 130. ZERO's public RPC is unavailable; the application reports this explicitly rather than submitting requests to a broken endpoint.
 
+Confirmed token swaps execute the exact contracts listed in the preview, even if LI.FI subsequently omits them. Each contract's amount is read from RPC before requesting a quote. Zero on-chain balances refresh the outdated Treasury snapshot without sending a transaction. Skip reasons (zero balance, minimum value, cost guard) appear in shared logs and the result dialog; a run with no swaps shows a warning rather than green success.
+
 Database connection errors remain in the startup/settings dialog without clearing entered fields.
 PostgreSQL authentication, missing databases and connectivity failures have readable messages;
 failed settings changes preserve the existing working connection. Password and wallet PIN fields show

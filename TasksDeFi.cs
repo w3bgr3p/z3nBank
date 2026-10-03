@@ -228,16 +228,25 @@ public class DeFi
     public sealed record SwapResult(int Succeeded, int Failed, string? Error = null)
     {
         public string? RefreshError { get; init; }
+        public IReadOnlyList<SwapSkip> SkipReasons { get; init; } = [];
     }
+    public sealed record SwapSkip(string Chain, string Symbol, string Address, string Reason);
 
     public static async Task<SwapResult> SwapAllTokensNative(Db db, int id, decimal minValue, string pin,
         bool excludeStables = false, Protocol clientType = Protocol.LiFi, int delayMs = 108,
          string chains = null, Logger log = null, string integrator = null, decimal? fee = null,
-         IReadOnlySet<string>? tokenTargets = null, string? expectedWallet = null)
+         IReadOnlySet<string>? tokenTargets = null, string? expectedWallet = null,
+         IReadOnlyList<TokenSelection.Target>? confirmedTargets = null)
     {
         int successCount = 0;
         int failCount = 0;
         var refreshErrors = new List<string>();
+        var skips = new List<SwapSkip>();
+        void Skip(string chain, Jumper.TokenInfo token, string reason)
+        {
+            skips.Add(new(chain, token.Symbol, token.Address, reason));
+            log?.Send($"Skip | account #{id} | {chain} | {token.Symbol} | {token.Address} | {reason}", "WARNING");
+        }
         
         try
         {
@@ -250,13 +259,16 @@ public class DeFi
             }
 
             using var jumper = new Jumper(log);
-            var chainNames = await SwapExecution.Read(jumper.GetChainMapping());
+            var chainNames = confirmedTargets == null ? await SwapExecution.Read(jumper.GetChainMapping()) :
+                confirmedTargets.GroupBy(t => t.ChainId).ToDictionary(g => g.Key, g => g.First().Chain);
             chainNames = FilterChains(chainNames, filter: chains);
             
             var account = new Account(key);
             if (expectedWallet != null && !account.Address.Equals(expectedWallet, StringComparison.OrdinalIgnoreCase))
                 return new SwapResult(0, 0, "Private key does not match the confirmed wallet");
-            var bal = await SwapExecution.Read(jumper.GetBalances(account.Address));
+            var bal = confirmedTargets == null ? await SwapExecution.Read(jumper.GetBalances(account.Address)) :
+                new Jumper.JumperResponse { WalletAddress = account.Address, Balances =
+                    TokenSelection.ExecutionTokens(confirmedTargets) };
             
             if (bal?.Balances == null || !bal.Balances.Any())
             {
@@ -277,7 +289,7 @@ public class DeFi
                 string chainName = chainNames.GetValueOrDefault(chainIdInt, $"ID:{chain.Key}");
                 
                 var tokensToSwap = chain.Value.Where(t => 
-                    t.ValueUSD > minValue && 
+                    (confirmedTargets != null || t.ValueUSD > minValue) &&
                     !TokenSelection.IsNative(t.Address) &&
                     (tokenTargets == null || tokenTargets.Contains(TokenSelection.Key(chainIdInt, t.Address)))
                 ).ToList();
@@ -293,6 +305,8 @@ public class DeFi
                 }
 
                 var web3 = CreateWeb3(key, rpcUrl, clientType);
+                var actualChain = await SwapExecution.Read(web3.Eth.ChainId.SendRequestAsync());
+                if (actualChain.Value != chainIdInt) throw new InvalidDataException($"RPC chain mismatch for {chainName}: expected {chainIdInt}, received {actualChain.Value}");
                 
 
                 foreach (var token in tokensToSwap)
@@ -301,8 +315,7 @@ public class DeFi
                     
                     try
                     {
-                        if (token.IsStable && excludeStables) continue;
-                        string opInfo = $"[{chainName}] {token.Symbol} ({token.ValueUSD:F2} USD)";
+                        if (token.IsStable && excludeStables) { Skip(chainName, token, "Stablecoins are excluded"); continue; }
 
                         var tokenService = web3.Eth.GetContractHandler(token.Address);
                         BigInteger actualBalanceRaw;
@@ -318,10 +331,23 @@ public class DeFi
                                 .QueryAsync<BigInteger>(token.Address, new BalanceOfFunction { Owner = account.Address }));
                         }
                         
-                        if (actualBalanceRaw <= 0) 
+                        token.Amount = actualBalanceRaw.ToString();
+                        string opInfo = $"[{chainName}] {token.Symbol} ({token.ValueUSD:F2} USD)";
+                        if (actualBalanceRaw <= 0)
                         {
-                            log?.Send($"⚠️ {token.Symbol} | Jumper api freeze. Real balance is 0", "WARNING");
-                            continue; 
+                            Skip(chainName, token, "On-chain balance is zero; the displayed snapshot was outdated");
+                            try
+                            {
+                                await TreasuryRpcBalances.RefreshKnown(db, id, chainName, chainIdInt, account.Address, web3, chain.Value);
+                                log?.Send($"Zero balance verified and saved | #{id} | {chainName} | {token.Symbol}", "INFO");
+                            }
+                            catch (Exception ex) { refreshErrors.Add(ex.Message); log?.Send($"Zero balance snapshot refresh failed | #{id} | {chainName} | {ex.Message}", "ERROR"); }
+                            continue;
+                        }
+                        if (confirmedTargets != null && BalanceMath.GetValueUsd(actualBalanceRaw.ToString(), token.Decimals, token.PriceUSD) <= minValue)
+                        {
+                            Skip(chainName, token, $"Live RPC balance value is at or below Min. USD {minValue}");
+                            continue;
                         }
                         
                         await SwapExecution.Delay(delayMs);
@@ -343,7 +369,7 @@ public class DeFi
                         var costs = await SwapExecution.Read(SwapCostGuard.CheckAsync(quote, web3, account.Address));
                         if (!costs.Allowed)
                         {
-                            log?.Send($"Skip {opInfo} | {costs.Reason}", "WARNING");
+                            Skip(chainName, token, costs.Reason);
                             continue;
                         }
                         log?.Send($"{opInfo} | {costs.Reason}", "INFO");
@@ -381,13 +407,13 @@ public class DeFi
                 }
             }
             
-            log?.Send($"🏁 Done | Total: {successCount + failCount} | Success: {successCount} | Fail: {failCount}");
-            return new SwapResult(successCount, failCount) { RefreshError = refreshErrors.Count == 0 ? null : string.Join("; ", refreshErrors) };
+            log?.Send($"🏁 Done | Total: {successCount + failCount + skips.Count} | Success: {successCount} | Fail: {failCount} | Skipped: {skips.Count}");
+            return new SwapResult(successCount, failCount) { RefreshError = refreshErrors.Count == 0 ? null : string.Join("; ", refreshErrors), SkipReasons = skips };
         }
         catch (Exception ex) when (ex is not OperationCanceledException && ex is not ReceiptUnavailableException)
         {
             log?.Send($"🚨 Critical: {ex.Message}", "CRITICAL");
-            return new SwapResult(successCount, failCount, ex.Message) { RefreshError = refreshErrors.Count == 0 ? null : string.Join("; ", refreshErrors) };
+            return new SwapResult(successCount, failCount, ex.Message) { RefreshError = refreshErrors.Count == 0 ? null : string.Join("; ", refreshErrors), SkipReasons = skips };
         }
     }
 

@@ -23,6 +23,9 @@ static class TokenChecks
         check("Plans match contract case-insensitively across accounts", plan.Count == 2);
         check("Plans exclude same-symbol contracts and other chains", plan.All(t => t.ChainId == 1 && t.Address.Equals(contract, StringComparison.OrdinalIgnoreCase)));
         check("Plans preserve the wallet bound to each account", plan.Single(t => t.Id == 2).Wallet == "wallet2");
+        var execution = TokenSelection.ExecutionTokens(plan.Where(t => t.Id == 1));
+        check("Confirmed contracts remain executable without an indexer response", execution["1"].Single().Address == contract && execution["1"].Single().Decimals == 6 && execution["1"].Single().PriceUSD == "1");
+        check("Execution never trusts the cached token amount", execution["1"].Single().Amount == "0");
         check("Plans apply minimum value", TokenSelection.Plan(accounts, assets, .1m).Count == 1);
         check("Account selection limits swaps on the server", TokenSelection.Plan(accounts, assets, 0m, [2]).Single().Id == 2);
         check("Network contract IDs and account whitelist jointly restrict the swap", TokenSelection.Plan(accounts,

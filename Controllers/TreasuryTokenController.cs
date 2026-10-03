@@ -111,7 +111,7 @@ public partial class TreasuryController
                     result = await DeFi.SwapAllTokensNative(plan.Database, group.Key, plan.Threshold, pin,
                         clientType: plan.Protocol, chains: string.Join(",", group.Select(t => t.Chain).Distinct()),
                         log: new Logger(true, acc: group.Key.ToString()), tokenTargets: keys,
-                        expectedWallet: group.First().Wallet);
+                        expectedWallet: group.First().Wallet, confirmedTargets: group.ToArray());
                     refreshError = result.RefreshError;
                 }
                 catch (ReceiptUnavailableException ex)
@@ -121,7 +121,7 @@ public partial class TreasuryController
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException) { result = new DeFi.SwapResult(0, 0, ex.Message); }
                 lock (TokenSwapLock) TokenSwapResults.Add(new { id = group.Key, result.Succeeded, result.Failed,
-                    result.Error, skipped = Math.Max(0, group.Count() - result.Succeeded - result.Failed), refreshError });
+                    result.Error, skipped = Math.Max(0, group.Count() - result.Succeeded - result.Failed), result.SkipReasons, refreshError });
                 if (haltQueue)
                 {
                     _log.Send($"Queue stopped for account #{group.Key}: {result.Error}", "ERROR");

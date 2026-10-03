@@ -66,4 +66,18 @@ public static class TreasuryRpcBalances
         db.ReplaceTreasurySnapshot(id, new Dictionary<string, string> { [chain] = JsonConvert.SerializeObject(balances) }, complete: false);
         Interlocked.Increment(ref _revision);
     }
+
+    public static async Task RefreshKnown(Db db, int id, string chain, int chainId, string wallet,
+        Web3 web3, IEnumerable<Jumper.TokenInfo> discovered)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var saved = db.GetTableColumns("_treasury").Contains(chain, StringComparer.Ordinal)
+            ? db.Get(chain, "_treasury", id: id, log: true, thrw: true) : null;
+        var tokens = discovered.ToList();
+        if (!string.IsNullOrWhiteSpace(saved)) tokens.AddRange(JsonConvert.DeserializeObject<List<Jumper.TokenInfo>>(saved) ?? []);
+        var balances = await Read(web3, chainId, wallet, tokens, cancellation: timeout.Token);
+        timeout.Token.ThrowIfCancellationRequested();
+        db.ReplaceTreasurySnapshot(id, new Dictionary<string, string> { [chain] = JsonConvert.SerializeObject(balances) }, complete: false);
+        Interlocked.Increment(ref _revision);
+    }
 }

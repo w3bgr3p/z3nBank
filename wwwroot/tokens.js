@@ -162,10 +162,13 @@ async function pollTokenSwap(jobId) {
                 const skipped = status.results.reduce((sum, r) => sum + r.skipped, 0);
                 const errors = status.results.filter(r => r.error || r.refreshError)
                     .map(r => `#${r.id}: ${r.error || `Balance refresh failed: ${r.refreshError}`}`);
+                const skipReasons = status.results.flatMap(r => (r.skipReasons || []).map(s =>
+                    `#${r.id} · ${s.chain} · ${s.symbol}: ${s.reason}`));
                 statusLabel.textContent = `${status.cancelled ? 'Stopped' : 'Done'}: ${success} swapped · ${failed} failed · ${skipped} skipped`;
-                await Swal.fire({ icon: failed || errors.length || status.cancelled ? 'warning' : 'success', title: status.cancelled ? 'Token swap stopped' : 'Token swap finished',
-                    text: `${statusLabel.textContent}${errors.length ? '\n' + errors.join('\n') : ''}` });
                 await refreshData();
+                await Swal.fire({ icon: failed || errors.length || status.cancelled || skipped ? 'warning' : 'success',
+                    title: status.cancelled ? 'Token swap stopped' : success === 0 ? 'No tokens swapped' : 'Token swap finished',
+                    text: `${statusLabel.textContent}${errors.length ? '\n' + errors.join('\n') : ''}${skipReasons.length ? '\n' + skipReasons.join('\n') : ''}` });
                 break;
             }
             await new Promise(resolve => setTimeout(resolve, 2000));

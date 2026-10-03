@@ -66,6 +66,11 @@ internal static class TreasuryRpcChecks
             saved = db.Get("Ethereum", "_treasury", id: 1); handler.FailToken = true;
             rejected = false; try { await TreasuryRpcBalances.RefreshAfterSwap(db, 1, "Ethereum", 1, wallet, web3, [], quote, "0x" + new string('1', 64)); } catch { rejected = true; }
             check("RPC failure preserves the complete previous chain snapshot", rejected && db.Get("Ethereum", "_treasury", id: 1) == saved && TreasuryRpcBalances.Revision == revision + 1);
+            handler.FailToken = false;
+            db.ReplaceTreasurySnapshot(1, new Dictionary<string, string> { ["Ethereum"] = JsonConvert.SerializeObject(new[] { native, stale }) }, complete: false);
+            await TreasuryRpcBalances.RefreshKnown(db, 1, "Ethereum", 1, wallet, web3, [stale]);
+            balances = JsonConvert.DeserializeObject<List<Jumper.TokenInfo>>(db.Get("Ethereum", "_treasury", id: 1))!;
+            check("Zero-balance skips refresh cached tokens and native without a swap or quote", balances.Any(t => t.Symbol == "Q" && t.Amount == "0") && balances.Any(t => t.Symbol == "ETH" && t.Amount == "1000000000000000000") && db.Get("Blast", "_treasury", id: 1) == "unrelated");
         } finally { File.Delete(path); }
     }
 }
