@@ -1,0 +1,17 @@
+# Опубликован релиз → пересобрать z3n.pro, чтобы он сразу появился на сайте.
+# workflow_dispatch — ручной запуск для проверки (Actions → notify-site → Run workflow).
+name: notify-site
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+jobs:
+  deploy-hook:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger z3n.pro rebuild
+        env:
+          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then echo "секрет VERCEL_DEPLOY_HOOK не задан"; exit 1; fi
+          curl -fsS -X POST --max-time 30 "$HOOK"
