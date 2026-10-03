@@ -49,7 +49,7 @@ public partial class TreasuryController
                 var positionLog = new Logger(true, acc: p.AccountId.ToString());
                 try
                 {
-                    if ((p.Type is not ("deposit" or "staked") && !DefiStargate.IsSupported(p) && !DefiJoe.IsSupported(p) && !DefiLayerBankRewards.IsSupported(p)) || !DefiVault.AddressValid(p.VaultAddress) || !DefiVault.AddressValid(p.AssetAddress))
+                    if ((p.Type is not ("deposit" or "staked") && p.WithdrawActions.Length == 0 && !DefiStargate.IsSupported(p) && !DefiJoe.IsSupported(p) && !DefiLayerBankRewards.IsSupported(p)) || !DefiVault.AddressValid(p.VaultAddress) || !DefiVault.AddressValid(p.AssetAddress))
                         throw new InvalidOperationException("Withdrawal adapter unavailable for this position");
                     var unavailable = DefiWithdrawal.Unavailable(p);
                     if (unavailable != null) throw new InvalidOperationException(unavailable);

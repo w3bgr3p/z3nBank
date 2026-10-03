@@ -67,13 +67,25 @@ harvests rewards. Compound V3 supports the verified Polygon USDC.e market in add
 and `:lending` provider suffixes normalize to the underlying market address. Polygon now uses the keyless
 PublicNode RPC because the former `polygon-rpc.com` endpoint rejects unauthenticated requests.
 
-PancakeSwap V3, Curve, Merkl and Hana positions are no longer incorrectly offered ERC-4626 withdrawal checks.
+The scanner also preserves Rabby's `withdraw_actions`, including exact `str_params`. When no verified built-in
+adapter handles a position, a shared handler builds the withdrawal or claim transaction from these actions,
+as [Rabby's own DappActions UI](https://github.com/RabbyHub/Rabby/blob/develop/src/ui/views/CommonPopup/AssetList/components/DappActions/hook.ts) does.
+It checks the RPC network, destination and address arguments, simulates through RPC and Rabby's free
+`pre_exec_tx` endpoint, and prices the exact simulated raw outputs before confirmation. The same checks run
+again before signing. Base includes OP Stack data/operator fees; Taiko uses its transaction gas estimate.
+This supports simple direct actions such as Seamless on Base and Hana Finance on Taiko without separate
+protocol adapters. Existing snapshots need a new scan to obtain actions. Shared actions are deduplicated in batches.
+Proxy-held positions, approval sequences, ambiguous actions, unsupported ABI types and queued exits remain
+blocked with a reason. A missing action is not permission to guess calldata: GMX V2 and Hana Network currently
+return empty action lists for the observed positions and still require protocol-specific exits.
+
+Without an available Rabby action, PancakeSwap V3, Curve, Merkl and Hana positions are not offered ERC-4626 withdrawal checks.
 Their details explain the required NFT exit, pool exit, reward proof or lending adapter. Stargate LP/farm exits
 and Compound reward claims also remain unsupported; STG escrow withdrawal and supplied Compound assets
 have separate verified paths.
 
-**Check withdrawal** attempts a direct synchronous [ERC-4626](https://eips.ethereum.org/EIPS/eip-4626) withdrawal.
-Currently this supports Ethereum, BSC, Gnosis, Polygon, Avalanche and Blast. The contract must expose the matching underlying asset
+For positions without a Rabby action or a built-in adapter, **Check withdrawal** attempts a direct synchronous [ERC-4626](https://eips.ethereum.org/EIPS/eip-4626) withdrawal.
+Supported fee paths include Ethereum, BSC, Gnosis, Polygon, Avalanche, Blast, Optimism, Arbitrum, zkSync Era, Scroll, Base and Taiko. The contract must expose the matching underlying asset
 and a positive `maxWithdraw(owner)`. The app simulates the exact withdrawal, checks gas and fresh asset prices,
 shows a preview, and requires explicit confirmation. It withdraws the displayed underlying amount to the same wallet;
 it does not swap the result to native currency. The selected Gas +% applies. The fee must be below the output value.

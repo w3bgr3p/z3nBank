@@ -6,6 +6,10 @@ public sealed record DefiPosition(string Id, int AccountId, string Wallet, strin
     string Protocol, string Type, string Symbol, string Amount, decimal? ValueUsd,
     string? AssetAddress, string? VaultAddress, string GroupId)
 {
+    public RabbyWithdrawAction[] WithdrawActions { get; init; } = [];
+    public bool HasProxy { get; init; }
+    public decimal DebtUsd { get; init; }
+    public string? ProtocolId { get; init; }
     public string? WithdrawalReason => DefiWithdrawal.Unavailable(this);
     public string? PriceSource { get; init; }
 }
@@ -127,13 +131,23 @@ public sealed class DefiPositionsClient : IDisposable
                         result.Add(new DefiPosition($"{group}:{field}:{tokenIndex++}", accountId, wallet, chain,
                             (string?)protocol["name"] ?? protocolId, kind, (string?)token["optimized_symbol"] ?? (string?)token["symbol"] ?? "?",
                             rawAmount, Value(amount, price),
-                            AssetId((string?)token["id"], chain), PoolId((string?)item["pool"]?["id"], (string?)protocol["name"]), group));
+                            AssetId((string?)token["id"], chain), PoolId((string?)item["pool"]?["id"], (string?)protocol["name"]), group) {
+                                WithdrawActions = item["withdraw_actions"]?.ToObject<RabbyWithdrawAction[]>() ?? [],
+                                DebtUsd = Number(item["stats"]?["debt_usd_value"]) ?? 0,
+                                ProtocolId = protocolId,
+                                HasProxy = !string.IsNullOrWhiteSpace((string?)item["proxy_detail"]?["proxy_contract_id"])
+                            });
                     }
                 }
                 if (result.Count == before)
                     result.Add(new DefiPosition(group + ":unknown", accountId, wallet, chain,
                         (string?)protocol["name"] ?? protocolId, "unknown", (string?)item["name"] ?? "Position", "Unknown",
-                        Number(item["stats"]?["net_usd_value"]), null, null, group));
+                        Number(item["stats"]?["net_usd_value"]), null, PoolId((string?)item["pool"]?["id"], (string?)protocol["name"]), group) {
+                            WithdrawActions = item["withdraw_actions"]?.ToObject<RabbyWithdrawAction[]>() ?? [],
+                            DebtUsd = Number(item["stats"]?["debt_usd_value"]) ?? 0,
+                            ProtocolId = protocolId,
+                            HasProxy = !string.IsNullOrWhiteSpace((string?)item["proxy_detail"]?["proxy_contract_id"])
+                        });
             }
         }
         return result;

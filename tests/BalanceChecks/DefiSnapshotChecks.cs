@@ -28,7 +28,7 @@ internal static class DefiSnapshotChecks
                 [new(1, wallet, "scanned"), new(2, wallet, "pending")], [new { accountId = 1, error = "test error" }]);
             db.SaveDefiSnapshot(saved);
             var loaded = Open(path).LoadDefiSnapshot()!;
-            check("A new database connection restores exact positions, unknown prices, time and errors", loaded.Positions.Single() == p && loaded.UpdatedAt == saved.UpdatedAt && loaded.Errors.Length == 1);
+            check("A new database connection restores exact positions, unknown prices, time and errors", JToken.DeepEquals(JObject.FromObject(loaded.Positions.Single()), JObject.FromObject(p)) && loaded.UpdatedAt == saved.UpdatedAt && loaded.Errors.Length == 1);
             var status = Status(Open(path));
             check("Status restores partial scan without starting a scan or withdrawal", status["positions"]!.Count() == 1 && (bool)status["cancelled"]! && !(bool)status["running"]! && !(bool)status["exitRunning"]!);
             db.SaveDefiSnapshot(saved with { NeedsRescan = true });

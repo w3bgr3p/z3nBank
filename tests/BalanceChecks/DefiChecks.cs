@@ -128,8 +128,9 @@ internal static class DefiChecks
         foreach (var name in new[] { "PancakeSwap V3", "Curve", "Merkl", "Hana Network", "Hana Finance" })
             check(name + " never attempts an incompatible ERC-4626 exit", DefiWithdrawal.Unsupported(stg with { Protocol = name, Type = "deposit" }) != null);
         var l2Blocked = false;
-        try { DefiVault.Network("base"); } catch (InvalidOperationException) { l2Blocked = true; }
+        try { DefiVault.Network("linea"); } catch (InvalidOperationException) { l2Blocked = true; }
         check("L2 withdrawal blocked until additional fees are supported", l2Blocked);
+        check("Base and Taiko have configured withdrawal fee paths", DefiVault.Network("base").ChainId == 8453 && DefiVault.Network("taiko").ChainId == 167000);
         foreach (var pair in new[] { (0m, 1m), (1m, 0m), (1m, 1m), (1m, 2m) })
         {
             var blocked = false;

@@ -144,7 +144,7 @@ public partial class TreasuryController
             if (db != _defiDb) position = null;
         }
         if (position == null) return BadRequest(new { error = "Scan DeFi positions for the current database first" });
-        if ((position.Type is not ("deposit" or "staked") && !DefiStargate.IsSupported(position) && !DefiJoe.IsSupported(position) && !DefiLayerBankRewards.IsSupported(position)) || !DefiVault.AddressValid(position.VaultAddress) || !DefiVault.AddressValid(position.AssetAddress))
+        if ((position.Type is not ("deposit" or "staked") && position.WithdrawActions.Length == 0 && !DefiStargate.IsSupported(position) && !DefiJoe.IsSupported(position) && !DefiLayerBankRewards.IsSupported(position)) || !DefiVault.AddressValid(position.VaultAddress) || !DefiVault.AddressValid(position.AssetAddress))
             return BadRequest(new { error = "No automatic withdrawal adapter for this position" });
         var previewLog = new Logger(true, acc: position.AccountId.ToString());
         previewLog.Send($"DeFi withdrawal check | {position.Protocol} | {position.Chain} | {position.Symbol}");

@@ -28,7 +28,7 @@ public static class DefiVault
             "xdai" => "gnosis", "matic" => "polygon", _ => chain };
         var id = Rpc.ChainId(name);
         // L2 withdrawals require chain-specific L1 fee estimates before automatic execution.
-        if (id is not (1 or 10 or 56 or 100 or 137 or 43114 or 81457 or 42161 or 324 or 534352))
+        if (id is not (1 or 10 or 56 or 100 or 137 or 43114 or 81457 or 42161 or 324 or 534352 or 8453 or 167000))
             throw new InvalidOperationException("This network needs an additional withdrawal fee adapter.");
         return (id, Rpc.Get(name));
     }

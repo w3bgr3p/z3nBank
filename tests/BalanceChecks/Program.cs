@@ -5,6 +5,14 @@ using z3n;
 using System.Globalization;
 using System.Net;
 
+if (args.Length == 1 && args[0] == "--rabby-actions")
+{
+    var errors = 0;
+    await RabbyActionChecks.Run((name, passed) => { Console.WriteLine($"{(passed ? "PASS" : "FAIL")}: {name}"); if (!passed) errors++; });
+    Environment.ExitCode = errors == 0 ? 0 : 1;
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--repair-native-live")
 {
     var config = new DbConfigStore().Load() ?? throw new InvalidOperationException("No saved database connection");

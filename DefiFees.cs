@@ -23,10 +23,11 @@ public static class DefiFees
     {
         // Arbitrum eth_estimateGas includes the L1 posting component in its gas units.
         // zkSync Era estimates charge execution and pubdata together, including for legacy EOA transactions.
-        if (chainId is 1 or 56 or 100 or 137 or 43114 or 42161 or 324) return 0;
-        if (chainId is not (10 or 81457 or 534352)) throw new InvalidOperationException("Missing network data fee adapter");
+        // Taiko charges EVM transaction gas through its L2 base fee, without an OP data-fee oracle surcharge.
+        if (chainId is 1 or 56 or 100 or 137 or 43114 or 42161 or 324 or 167000) return 0;
+        if (chainId is not (10 or 8453 or 81457 or 534352)) throw new InvalidOperationException("Missing network data fee adapter");
         var nonce = await SwapExecution.Read(web3.Eth.Transactions.GetTransactionCount.SendRequestAsync(tx.From, BlockParameter.CreatePending()));
-        if (chainId == 10)
+        if (chainId is 10 or 8453)
         {
             // OP's Fjord upper bound includes signature bytes and avoids compression underestimates.
             // getOperatorFee follows the active Isthmus/Jovian rules; missing reads fail closed.
@@ -35,7 +36,7 @@ public static class DefiFees
             var dataFee = await SwapExecution.Read(oracle.GetFunction("getL1FeeUpperBound").CallAsync<BigInteger>(
                 new BigInteger(Unsigned(tx, chainId, nonce.Value, gas, price).Length)));
             var operatorFee = await SwapExecution.Read(oracle.GetFunction("getOperatorFee").CallAsync<BigInteger>(gas));
-            if (dataFee <= 0 || operatorFee < 0) throw new InvalidOperationException("Optimism network fees unavailable; withdrawal blocked");
+            if (dataFee <= 0 || operatorFee < 0) throw new InvalidOperationException("OP Stack network fees unavailable; withdrawal blocked");
             return ((dataFee + operatorFee) * 125 + 99) / 100;
         }
         // Blast's oracle adds worst-case signature bytes to the unsigned RLP. No key or signature is used here.

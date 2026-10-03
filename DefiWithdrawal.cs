@@ -5,6 +5,10 @@ namespace z3nSafe;
 
 public static class DefiWithdrawal
 {
+    public static bool UsesRabby(DefiPosition p) => p.WithdrawActions.Length > 0 && !IsGate(p) &&
+        !DefiLending.IsAave(p) && !DefiJoe.IsSupported(p) && !DefiLayerBankRewards.IsSupported(p) &&
+        !DefiStargate.IsSupported(p) && !DefiBlackwing.IsSupported(p) && !DefiSyncSwap.IsSupported(p) &&
+        !DefiScrollLending.IsLayerBank(p) && !DefiScrollLending.IsCompound(p);
     // SynFutures official Oyster SDK, src/config/blast.json and src/common/util.ts.
     public const string BlastGate = "0x6A372dBc1968f4a07cf2ce352f410962A972c257";
     public const string BlastWeth = "0x4300000000000000000000000000000000000004";
@@ -30,6 +34,7 @@ public static class DefiWithdrawal
         if (DefiSyncSwap.IsSupported(p)) return await DefiSyncSwap.Prepare(web3, chainId, p, gasPercent, exactAmount, priceClient);
         if (DefiScrollLending.IsLayerBank(p) || DefiScrollLending.IsCompound(p))
             return await DefiScrollLending.Prepare(web3, chainId, p, gasPercent, exactAmount, priceClient);
+        if (UsesRabby(p)) return await DefiRabbyActions.Prepare(web3, chainId, p, gasPercent, exactAmount, priceClient);
         var unsupported = Unsupported(p);
         if (unsupported != null) throw new InvalidOperationException(unsupported);
         if (!IsGate(p))
@@ -50,13 +55,16 @@ public static class DefiWithdrawal
         var tx = gate.GetFunction("withdraw").CreateTransactionInput(p.Wallet, GateArgument(p.AssetAddress!, amount));
         return await DefiVault.PrepareTransaction(web3, chainId, p.AssetAddress!, amount, tx, gasPercent, priceClient);
     }
-    public static string? Unsupported(DefiPosition p) => p.Protocol switch
+    public static string? Unsupported(DefiPosition p) => UsesRabby(p)
+        ? DefiRabbyActions.Unavailable(p) : p.Protocol switch
     {
         "Stargate" when !DefiStargate.IsSupported(p) => p.Type == "locked" ? "This Stargate escrow has not been verified for automatic withdrawal." : "Stargate liquidity/farm positions need pool redemption and reward adapters; they are not ERC-4626 vaults.",
         "PancakeSwap V3" => "PancakeSwap V3 needs the NFT position ID, liquidity removal and fee/reward collection through its position manager. The provider pool address is not an ERC-4626 withdrawal vault.",
         "Curve" => "Curve requires a verified pool/gauge exit and minimum outputs for each asset; ERC-4626 withdrawal does not apply.",
         "Merkl" => "Merkl rewards require a current distributor Merkle proof and a separate claim adapter. They are not ERC-4626 deposits.",
         "Hana Network" => "Hana Network deposits need a protocol-specific withdrawal adapter; the native dust estimate is not an ERC-4626 balance.",
+        "GMX V2" => "Rabby returned no withdrawal action. GMX V2 needs an asynchronous market withdrawal request, execution fee and minimum outputs; the market token is not an ERC-4626 vault.",
+        "Seamless Protocol" => "Rabby returned no withdrawal action for this Seamless position. Scan again to retrieve its lending exit parameters.",
         "Hana Finance" => "Hana Finance lending on Taiko needs a verified market adapter and network fee support.",
         "Blackwing" when !DefiBlackwing.IsSupported(p) => "This Blackwing vault has not been verified for automatic withdrawal.",
         "SyncSwap" when !DefiSyncSwap.IsSupported(p) => "SyncSwap LP withdrawal is currently supported on zkSync Era only.",
@@ -72,7 +80,7 @@ public static class DefiWithdrawal
     public static string? Unavailable(DefiPosition p)
     {
         var reason = Unsupported(p); if (reason != null) return reason;
-        if ((p.Type is not ("deposit" or "staked") && !DefiStargate.IsSupported(p) && !DefiJoe.IsSupported(p) && !DefiLayerBankRewards.IsSupported(p)) || !DefiVault.AddressValid(p.AssetAddress) || !DefiVault.AddressValid(p.VaultAddress))
+        if ((p.Type is not ("deposit" or "staked") && p.WithdrawActions.Length == 0 && !DefiStargate.IsSupported(p) && !DefiJoe.IsSupported(p) && !DefiLayerBankRewards.IsSupported(p)) || !DefiVault.AddressValid(p.AssetAddress) || !DefiVault.AddressValid(p.VaultAddress))
             return "No withdrawal adapter for this position type or contract";
         try { DefiVault.Network(p.Chain); return null; }
         catch (ArgumentException) { return $"No configured RPC for network {p.Chain}"; }
