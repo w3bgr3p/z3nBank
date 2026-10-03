@@ -25,6 +25,7 @@
     document.body.append(view);
     const modal = document.createElement('dialog'); modal.id = 'defiDetail'; modal.className = 'defi-panel';
     modal.innerHTML = `<div class="defi-heading"><strong id="defiDetailTitle"></strong><button id="defiClose">Close</button></div>
+        <div id="defiDetailBlocked" role="status" aria-live="polite" hidden></div>
         <div id="defiDetailStatus" role="status"></div><div class="defi-table-wrap"><table><thead><tr>
         <th>Network</th><th>Protocol</th><th>Type</th><th>Asset</th><th>Amount</th><th>Est. USD</th><th>Withdrawal</th>
         </tr></thead><tbody id="defiRows"></tbody></table></div>`;
@@ -76,13 +77,23 @@
         const item = document.createElement(tag); item.textContent = String(value); row.append(item); return item;
     }
     const active = () => busy || state?.running || state?.preparing || state?.exitRunning;
+    function withdrawalBlockReason() {
+        if (state?.running) return `Withdrawal checks are paused while scanning: ${state.processed}/${state.total} accounts. Wait for the scan to finish or use Stop scan / check.`;
+        if (state?.preparing) return `Withdrawal checks are paused while another check is running: ${state.prepareDone || 0}/${state.prepareTotal || 0}.`;
+        if (state?.exitRunning) return 'Withdrawal checks are paused while a withdrawal is running. Wait for it to finish.';
+        if (busy) return 'Withdrawal check or confirmation is in progress. Finish or cancel it first.';
+        if (state?.needsRescan) return 'Positions may have changed after a transaction. Scan accounts again before checking another withdrawal.';
+        return '';
+    }
     function buttons() {
         el('defiScan').disabled = active(); el('defiStop').disabled = !state?.running && !state?.preparing;
         el('defiStopExit').disabled = !state?.exitRunning;
         el('defiBatch').disabled = active() || state?.needsRescan || !el('defiProtocol').value || !selected.size;
         el('defiBatch').title = protocolsSelected.size > 1 ? 'Choose one protocol for a batch withdrawal' : '';
         el('defiSelected').textContent = `${selected.size} selected`;
-        el('defiRows').querySelectorAll('button').forEach(b => b.disabled = active() || state?.needsRescan);
+        const reason = withdrawalBlockReason();
+        el('defiDetailBlocked').textContent = reason; el('defiDetailBlocked').hidden = !reason;
+        el('defiRows').querySelectorAll('button').forEach(b => { b.disabled = !!reason; b.title = reason; });
     }
     function accounts() {
         const rows = filtered(), found = new Map();
@@ -182,7 +193,7 @@
             row.title = `Wallet: ${p.wallet}\nContract: ${p.vaultAddress || 'unknown'}\nGroup: ${p.groupId}`;
             const action = cell(row, '');
             if (!p.withdrawalReason && ['deposit', 'staked', 'locked', 'reward'].includes(p.type) && /^0x[\da-f]{40}$/i.test(p.vaultAddress || '') && /^0x[\da-f]{40}$/i.test(p.assetAddress || '')) {
-                const button = document.createElement('button'); button.textContent = p.type === 'reward' ? p.protocol === 'LayerBank' ? 'Check unlocked rewards' : 'Check claim' : 'Check withdrawal'; button.disabled = active() || state.needsRescan;
+                const button = document.createElement('button'); button.textContent = p.type === 'reward' ? p.protocol === 'LayerBank' ? 'Check unlocked rewards' : 'Check claim' : 'Check withdrawal'; button.title = withdrawalBlockReason(); button.disabled = !!button.title;
                 button.onclick = () => withdraw(p); action.append(button);
             } else {
                 action.textContent = 'Unavailable · details'; action.title = p.withdrawalReason || 'No automatic adapter for this position';

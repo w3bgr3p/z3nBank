@@ -65,6 +65,16 @@ async function singlePreview(accept = false) {
     assert.equal(el('defiRows').children.length, 2, 'Cell opens details for exactly that account and network');
     assert.equal(el('defiRows').children[0].children[1].textContent, position.protocol, 'Protocol text is never HTML');
     assert.equal(el('defiRows').children[1].children[6].children.length, 0, 'Loan cannot start a withdrawal');
+    current.running = true; current.processed = 77; current.total = 100;
+    context.window.setDefiOpen(true); await flush();
+    assert(detailButton().disabled && !el('defiDetailBlocked').hidden);
+    assert(el('defiDetailBlocked').textContent.includes('77/100') && detailButton().title.includes('Stop scan'));
+    current.running = false; current.needsRescan = true;
+    context.window.setDefiOpen(true); await flush();
+    assert(detailButton().disabled && el('defiDetailBlocked').textContent.includes('Scan accounts again'));
+    current.needsRescan = false;
+    context.window.setDefiOpen(true); await flush();
+    assert(!detailButton().disabled && el('defiDetailBlocked').hidden && !detailButton().title);
     await singlePreview();
     assert(!requests.some(r => r.url.endsWith('execute')), 'Cancelled preview never executes');
     assert(confirmText.includes('0.123456789123456789'), 'Exact token amount survives preview');
