@@ -53,6 +53,27 @@ static class CancellationChecks
         });
         check("Restricted RPC switches to fallback without resubmitting a transaction", primaryReads == 1 && fallbackReads == 2 && receipt == expected);
 
+        var wrongChainReads = 0;
+        var goodReads = 0;
+        var verifiedRead = ReceiptWaiter.VerifiedFallback(42161, "0xarb",
+            new Func<Task<System.Numerics.BigInteger>>[] {
+                () => Task.FromResult(new System.Numerics.BigInteger(1)),
+                () => Task.FromResult(new System.Numerics.BigInteger(42161)) },
+            new Func<Task<TransactionReceipt>>[] {
+                () => { wrongChainReads++; return Task.FromResult(expected); },
+                () => { goodReads++; return Task.FromResult(expected); } });
+        receipt = await verifiedRead();
+        check("Receipt fallback rejects a foreign chain before reading receipts", wrongChainReads == 0 && goodReads == 1 && receipt == expected);
+        verifiedRead = ReceiptWaiter.VerifiedFallback(42161, "0xarb",
+            new Func<Task<System.Numerics.BigInteger>>[] {
+                () => Task.FromResult(new System.Numerics.BigInteger(42161)),
+                () => Task.FromResult(new System.Numerics.BigInteger(42161)) },
+            new Func<Task<TransactionReceipt>>[] {
+                () => Task.FromException<TransactionReceipt>(new Exception("HTTP 403")),
+                () => Task.FromResult(expected) });
+        check("Restricted fallback receipt method rotates to another verified RPC", await verifiedRead() == expected);
+        check("Arbitrum has a receipt fallback", ReceiptWaiter.Fallback(42161, "0xarb") != null);
+
         using var delayStop = new CancellationTokenSource();
         var delaying = SwapExecution.Run(delayStop.Token, () => SwapExecution.Delay(60000));
         delayStop.Cancel();

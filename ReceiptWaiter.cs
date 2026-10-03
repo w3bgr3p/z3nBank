@@ -6,9 +6,52 @@ namespace z3nSafe;
 
 public static class ReceiptWaiter
 {
-    private static readonly Lazy<Web3> BscFallback = new(() => new Web3("https://bsc-dataseed1.bnbchain.org"));
-    public static Func<Task<TransactionReceipt>>? Fallback(int chainId, string hash) => chainId == 56
-        ? () => BscFallback.Value.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(hash) : null;
+    public static Func<Task<TransactionReceipt>>? Fallback(int chainId, string hash)
+    {
+        var urls = chainId switch
+        {
+            56 => new[] { "https://bsc-dataseed1.bnbchain.org", "https://bsc-rpc.publicnode.com" },
+            42161 => new[] { "https://arb1.arbitrum.io/rpc", "https://arbitrum.drpc.org" },
+            _ => Array.Empty<string>()
+        };
+        if (urls.Length == 0) return null;
+        var providers = urls.Select(url => new Web3(url)).ToArray();
+        return VerifiedFallback(chainId, hash,
+            providers.Select(web3 => (Func<Task<System.Numerics.BigInteger>>)(async () =>
+                (await web3.Eth.ChainId.SendRequestAsync()).Value)).ToArray(),
+            providers.Select(web3 => (Func<Task<TransactionReceipt>>)(() =>
+                web3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(hash))).ToArray());
+    }
+
+    public static Func<Task<TransactionReceipt>> VerifiedFallback(int chainId, string hash,
+        Func<Task<System.Numerics.BigInteger>>[] chains, Func<Task<TransactionReceipt>>[] reads)
+    {
+        var selected = 0;
+        var verified = new bool[reads.Length];
+        return async () =>
+        {
+            var failures = new List<Exception>();
+            for (var offset = 0; offset < reads.Length; offset++)
+            {
+                var index = (selected + offset) % reads.Length;
+                try
+                {
+                    if (!verified[index])
+                    {
+                        var actual = await SwapExecution.Read(chains[index]());
+                        if (actual != chainId) throw new InvalidOperationException($"Receipt RPC chain mismatch: expected {chainId}, received {actual}");
+                        verified[index] = true;
+                    }
+                    var receipt = await SwapExecution.Read(reads[index]());
+                    selected = index;
+                    return receipt;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) { failures.Add(ex); }
+            }
+            throw new AggregateException($"All fallback receipt RPCs failed | chain {chainId} | TX: {hash}", failures);
+        };
+    }
 
     public static async Task<TransactionReceipt> WaitAsync(Func<Task<TransactionReceipt>> read, string txHash,
         Logger? log, int maxAttempts = 60, int delayMs = 5000, Func<Task<TransactionReceipt>>? fallback = null)
