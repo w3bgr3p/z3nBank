@@ -146,7 +146,10 @@ tbody tr:hover td { background: var(--bg1) !important; }
 .defi-view[hidden] { display: none; }
 .defi-view { display: flex; flex: 1; min-height: 0; flex-direction: column; padding: 12px; gap: 8px; overflow: hidden; }
 body.defi-active > .controls, body.defi-active > .main-content, body.defi-active > .legend { display: none; }
-body.defi-active .stats-bar, body.defi-active .tooltip { display: none; }
+body.defi-active .stats-bar, body.defi-active #tooltip { display: none; }
+.defi-tooltip[hidden] { display: none; }
+.defi-tooltip { max-width: min(480px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow: hidden; pointer-events: none; }
+.defi-tooltip .token-symbol, .defi-tooltip .token-amount { white-space: normal; overflow-wrap: anywhere; }
 .header button[role="tab"][aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
 .defi-view .defi-controls { flex-wrap: wrap; flex-shrink: 0; }
 .defi-controls label { display: inline-flex; align-items: center; gap: 6px; }

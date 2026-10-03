@@ -28,6 +28,9 @@ const context = vm.createContext({ console, setTimeout: () => 1, clearTimeout() 
         body: { classList: { toggle() {} }, append(e) { elements.set(e.id, e); } } },
     fetch: async (url, options = {}) => {
         requests.push({ url, body: options.body && JSON.parse(options.body) });
+        if (url.endsWith('refresh-account')) {
+            current = { ...current, positions: current.positions.map(p => p.accountId === JSON.parse(options.body) ? { ...p, protocolId: 'fresh-protocol', withdrawalReason: null } : p) };
+        }
         if (url.endsWith('execute')) {
             if (executeGate) await executeGate;
             if (executeError) return { ok: false, json: async () => ({ error: executeError }) };
@@ -132,6 +135,12 @@ async function singlePreview(accept = false) {
     assert.equal(el('defiRows').children[0].children[6].children.length, 0, 'Unsupported contracts never offer an ERC-4626 withdrawal');
     el('defiRows').children[0].children[6].onclick();
     assert.equal(el('defiDetailStatus').textContent, 'Protocol exit is not ERC-4626');
+    current = { ...current, actionsVersion: 1 };
+    context.window.setDefiOpen(false); context.window.setDefiOpen(true); await flush();
+    el('defiGridBody').children[0].children[2].children[0].onclick(); await flush();
+    assert.equal(requests.find(r => r.url.endsWith('refresh-account')).body, 3, 'Old cached actions refresh only the opened account');
+    assert.equal(current.positions[0].protocolId, 'fresh-protocol');
+    assert(detailButton(), 'Refreshed actions replace the old unsupported snapshot without scanning all accounts');
     context.window.setDefiOpen(false); assert(el('defiPanel').hidden);
     console.log('PASS: DeFi tab, net heatmap, unknown values, account/network modal, batch selection, preview, confirmation, cancellation and stop');
 })().catch(e => { console.error(e); process.exitCode = 1; });

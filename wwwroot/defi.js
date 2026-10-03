@@ -23,6 +23,41 @@
         <div class="sidebar-section"><h3>Chains Distribution</h3><div class="chain-stats" id="defiChains"></div></div>
         <div class="sidebar-section"><h3>Portfolio Summary</h3><div id="defiSummary"></div></div></aside></div>`;
     document.body.append(view);
+    const tooltip = document.createElement('div');
+    tooltip.id = 'defiTooltip'; tooltip.className = 'tooltip defi-tooltip'; tooltip.hidden = true;
+    tooltip.setAttribute('role', 'tooltip'); document.body.append(tooltip);
+    let hovered = null;
+    const refreshingAccounts = new Set();
+    const hideTooltip = () => { hovered = null; tooltip.hidden = true; };
+    function showPositionTooltip(account, chain, event) {
+        hovered = { account, chain, x: event.clientX, y: event.clientY };
+        renderTooltip();
+    }
+    function renderTooltip() {
+        if (!hovered) return;
+        const { account, chain, x, y } = hovered;
+        const rows = filtered().filter(p => p.accountId === account.id && (!chain || p.chain === chain));
+        tooltip.replaceChildren();
+        const node = (cls, text) => { const n = document.createElement('div'); n.className = cls; n.textContent = text; return n; };
+        tooltip.append(node('tooltip-header', `#${account.id} - ${chain || 'All chains'}`), node('tooltip-address', account.address));
+        for (const p of rows) {
+            const item = node('token-item', ''), left = node('token-left', '');
+            left.append(node('token-symbol', `${p.protocol} / ${p.symbol}`), node('token-amount', `${p.amount} / ${p.type}${chain ? '' : ' / ' + p.chain}`));
+            item.append(left, node('token-value', p.valueUsd == null ? 'Price unknown' : money(p.valueUsd))); tooltip.append(item);
+        }
+        if (!rows.length) tooltip.append(node('token-amount', account.status === 'scanned' ? 'No positions' : `Scan: ${account.status}`));
+        tooltip.append(node('total-value', `Net est. USD: ${rows.length ? amountLabel(rows) : account.status === 'scanned' ? '$0.00' : '?'}`), node('token-amount', 'Click to open actions'));
+        tooltip.hidden = false; tooltip.className = 'tooltip defi-tooltip show';
+        const bounds = tooltip.getBoundingClientRect();
+        tooltip.style.left = Math.max(8, Math.min(x + 12, window.innerWidth - bounds.width - 8)) + 'px';
+        tooltip.style.top = Math.max(8, Math.min(y + 12, window.innerHeight - bounds.height - 8)) + 'px';
+    }
+    function tooltipEvents(target, account, chain) {
+        target.onmouseenter = event => showPositionTooltip(account, chain, event);
+        target.onmousemove = event => showPositionTooltip(account, chain, event);
+        target.onmouseleave = hideTooltip;
+        target.onblur = hideTooltip;
+    }
     const modal = document.createElement('dialog'); modal.id = 'defiDetail'; modal.className = 'defi-panel';
     modal.innerHTML = `<div class="defi-heading"><strong id="defiDetailTitle"></strong><button id="defiClose">Close</button></div>
         <div id="defiDetailBlocked" role="status" aria-live="polite" hidden></div>
@@ -47,6 +82,7 @@
         return data;
     }
     window.setDefiOpen = open => {
+        hideTooltip();
         view.hidden = !open; document.body.classList.toggle('defi-active', open);
         el('defiToggle').setAttribute('aria-selected', String(open));
         el('treasuryTab').setAttribute('aria-selected', String(!open));
@@ -78,6 +114,7 @@
     }
     const active = () => busy || state?.running || state?.preparing || state?.exitRunning;
     function withdrawalBlockReason(accountId = detail?.accountId) {
+        if (refreshingAccounts.has(accountId)) return 'Loading current positions and Rabby withdrawal actions for this account.';
         if (state?.preparing) return `Withdrawal checks are paused while another check is running: ${state.prepareDone || 0}/${state.prepareTotal || 0}.`;
         if (state?.exitRunning) return 'Withdrawal checks are paused while a withdrawal is running. Wait for it to finish.';
         if (busy) return 'Withdrawal check or confirmation is in progress. Finish or cancel it first.';
@@ -113,6 +150,7 @@
         button.className = 'heatmap-cell defi-heat ' + (!rows.length || !rows.some(p => p.valueUsd != null) ? 'empty' : value < 0 ? 'negative' : getValueLevel(value));
         button.textContent = rows.length ? amountLabel(rows) : account.status === 'scanned' ? '—' : '?';
         button.title = `${rows.length} position assets${account.status !== 'scanned' ? ' · ' + account.status : ''}`;
+        tooltipEvents(button, account, chain);
         button.onclick = () => showDetails(account.id, chain); td.append(button);
     }
     function render() {
@@ -136,6 +174,7 @@
             id.onclick = () => { selected.has(account.id) ? selected.delete(account.id) : selected.add(account.id); render(); };
             cell(row, '').append(id); const address = cell(row, account.address); address.className = 'defi-wallet';
             address.title = account.address; address.onclick = () => showDetails(account.id);
+            tooltipEvents(address, account);
             const positions = rows.filter(p => p.accountId === account.id);
             for (const chain of chains) heat(row, positions.filter(p => p.chain === chain), account, chain);
             heat(row, positions, account); el('defiGridBody').append(row);
@@ -147,6 +186,7 @@
         if (state.preparing) el('defiStatus').textContent += ` · Checking withdrawals ${state.prepareDone}/${state.prepareTotal}`;
         el('defiExitStatus').textContent = message || (state.exitRunning ? `Withdrawing · account #${state.batchAccount || '…'} · ${state.batchResults?.length || 0}/${state.batchTotal || 1} · ${state.exitResult || ''}` : state.exitResult || '');
         renderSidebar();
+        renderTooltip();
         if (detail && modal.open) renderDetails(); buttons();
     }
     function renderSidebar() {
@@ -184,7 +224,18 @@
         el('defiSummary').textContent = `Net est. USD: ${rows.length ? amountLabel(rows) : '$0.00'} · ${new Set(rows.map(p => p.protocol)).size} protocols · ${new Set(rows.map(p => p.chain)).size} chains · ${new Set(rows.map(p => p.accountId)).size} accounts`;
     }
     function showDetails(accountId, chain) {
+        hideTooltip();
         message = ''; detail = { accountId, chain }; renderDetails(); buttons(); if (!modal.open) modal.showModal();
+        const cached = state?.positions.filter(p => p.accountId === accountId) || [];
+        if (state?.actionsVersion === 1 && cached.some(p => !p.protocolId) && !withdrawalBlockReason(accountId) && !refreshingAccounts.has(accountId))
+            refreshSavedAccount(accountId);
+    }
+    async function refreshSavedAccount(accountId) {
+        refreshingAccounts.add(accountId);
+        message = 'Loading current positions and Rabby actions for this account...'; renderDetails(); buttons();
+        try { await api('refresh-account', accountId); message = ''; }
+        catch (e) { message = `Could not refresh Rabby actions: ${e.message}. Previous positions kept.`; }
+        finally { refreshingAccounts.delete(accountId); await poll(); }
     }
     function renderDetails() {
         el('defiDetailTitle').textContent = `Account #${detail.accountId}${detail.chain ? ' · ' + detail.chain : ''}${el('defiProtocol').value ? ' · ' + el('defiProtocol').value : ''}`;

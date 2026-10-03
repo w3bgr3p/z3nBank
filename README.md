@@ -74,7 +74,10 @@ It checks the RPC network, destination and address arguments, simulates through 
 `pre_exec_tx` endpoint, and prices the exact simulated raw outputs before confirmation. The same checks run
 again before signing. Base includes OP Stack data/operator fees; Taiko uses its transaction gas estimate.
 This supports simple direct actions such as Seamless on Base and Hana Finance on Taiko without separate
-protocol adapters. Existing snapshots need a new scan to obtain actions. Shared actions are deduplicated in batches.
+protocol adapters. Opening an account dialog refreshes legacy snapshots that predate action discovery, without
+rescanning every wallet. Shared actions are deduplicated in batches.
+Hover a DeFi network cell, account total or wallet address for a Treasury-style preview of protocols, token
+amounts and valuations. Click to open the account dialog with withdrawal actions.
 Proxy-held positions, approval sequences, ambiguous actions, unsupported ABI types and queued exits remain
 blocked with a reason. A missing action is not permission to guess calldata: GMX V2 and Hana Network currently
 return empty action lists for the observed positions and still require protocol-specific exits.

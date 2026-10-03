@@ -68,7 +68,18 @@ const status = { positions: [base, { ...base, id: 'p2', chain: 'arb', valueUsd: 
         await page.locator('#defiGridBody tr').first().locator('.account-id-button').click();
         assert.equal(await page.locator('#defiGridBody .account-id-button.selected').count(), 0);
         assert.equal(await page.locator('#defiGridBody .defi-heat').first().evaluate(e => getComputedStyle(e).alignItems), 'center');
+        const hoverCell = page.locator('#defiGridBody tr').first().locator('.defi-heat').nth(1);
+        await hoverCell.hover();
+        await page.locator('#defiTooltip').waitFor({ state: 'visible' });
+        const hoverText = await page.locator('#defiTooltip').innerText();
+        assert(hoverText.includes('Test Vault / Q') && hoverText.includes('1.25') && hoverText.includes('$25.00'));
+        assert.equal(await page.locator('#defiDetail').isVisible(), false, 'Hover previews positions without opening an actions dialog');
+        const hoverBounds = await page.locator('#defiTooltip').boundingBox();
+        assert(hoverBounds.x >= 0 && hoverBounds.y >= 0 && hoverBounds.x + hoverBounds.width <= 1600 && hoverBounds.y + hoverBounds.height <= 900);
+        await page.locator('#defiStatus').hover();
+        assert.equal(await page.locator('#defiTooltip').isVisible(), false, 'Leaving the cell hides the tooltip');
         await page.locator('#defiGridBody tr').first().locator('.defi-heat').nth(1).click();
+        assert.equal(await page.locator('#defiTooltip').isVisible(), false, 'Click switches from hover preview to actions');
         assert.equal(await page.locator('#defiRows tr').count(), 1);
         assert(await page.locator('#defiDetail').isVisible());
         status.running = true;

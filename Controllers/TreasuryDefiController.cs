@@ -60,7 +60,47 @@ public partial class TreasuryController
             needsRescan = _defiNeedsRescan || HasStaleDefiAccounts, requiresFullRescan = _defiNeedsRescan,
             preparing = _defiPrepare != null, prepareDone = _defiPrepareDone, prepareTotal = _defiPrepareTotal,
             batchTotal = _defiBatchTotal, batchAccount = _defiBatchAccount, batchResults = DefiBatchResults.ToArray(),
-            exitRunning = _defiExitRunning, exitResult = _defiExitResult, provider = "Rabby (DeBank data)" });
+            exitRunning = _defiExitRunning, exitResult = _defiExitResult, actionsVersion = 1, provider = "Rabby (DeBank data)" });
+    }
+    [HttpPost("defi/refresh-account")]
+    public async Task<IActionResult> RefreshDefiAccount([FromBody] int accountId)
+    {
+        var check = CheckDbConnection(); if (check != null) return check;
+        Db db; string wallet; int version;
+        using var source = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
+        lock (DefiLock)
+        {
+            if (_defiPrepare != null || _defiExitRunning || !DefiAccountReady(accountId))
+                return Conflict(new { error = "Account refresh is unavailable during this operation or before scanning" });
+            db = _dbService.GetDb();
+            if (_defiDb != db) return Conflict(new { error = "Database changed; load DeFi again" });
+            wallet = DefiAccounts[accountId].Address;
+            version = _defiVersion; _defiPrepare = source; _defiPrepareDone = 0; _defiPrepareTotal = 1;
+        }
+        var log = new Logger(true, acc: accountId.ToString());
+        try
+        {
+            log.Send("Refreshing DeFi account positions and Rabby withdrawal actions");
+            using var client = new DefiPositionsClient();
+            var rows = await client.ReadForScanAsync(accountId, wallet, source.Token);
+            lock (DefiLock)
+            {
+                if (_defiVersion != version || _defiDb != db || _dbService.GetDb() != db || !DefiAccountReady(accountId))
+                    return Conflict(new { error = "Positions changed during refresh; load DeFi again" });
+                DefiRows.RemoveAll(p => p.AccountId == accountId); DefiRows.AddRange(rows);
+                _defiVersion++; _defiExit = null; _defiBatchPlan = null;
+                SaveDefiProgress();
+            }
+            log.Send($"DeFi account refreshed | {rows.Count} position assets | {rows.Count(p => p.WithdrawActions.Length > 0)} with Rabby actions", "SUCCESS");
+            return Ok();
+        }
+        catch (Exception ex)
+        {
+            var error = SwapExecution.ErrorDetails(ex);
+            log.Send($"DeFi account refresh failed; previous positions kept | {error}", "ERROR");
+            return BadRequest(new { error });
+        }
+        finally { lock (DefiLock) { if (_defiPrepare == source) { _defiPrepare = null; _defiPrepareDone = 0; _defiPrepareTotal = 0; } } }
     }
     [HttpPost("defi/scan")]
     public IActionResult ScanDefi([FromBody] DefiScanRequest request)
