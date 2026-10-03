@@ -11,12 +11,20 @@ public static class TreasuryRpcBalances
 {
     private static long _revision;
     public static long Revision => Interlocked.Read(ref _revision);
-    public static Jumper.TokenInfo NativeFromQuote(object quote) => quote switch
+    public static Jumper.TokenInfo NativeFromQuote(object quote)
     {
-        LiFiBridge.QuoteResponse lifi => JObject.FromObject(lifi.Action.ToToken).ToObject<Jumper.TokenInfo>()!,
-        RelayBridge.QuoteResponse relay => JObject.FromObject(relay.Details)["currencyOut"]!["currency"]!.ToObject<Jumper.TokenInfo>()!,
-        _ => throw new InvalidDataException("Missing native output metadata")
-    };
+        if (quote is LiFiBridge.QuoteResponse lifi) return JObject.FromObject(lifi.Action.ToToken).ToObject<Jumper.TokenInfo>()!;
+        if (quote is not RelayBridge.QuoteResponse relay) throw new InvalidDataException("Missing native output metadata");
+        var output = JObject.FromObject(relay.Details)["currencyOut"] ?? throw new InvalidDataException("Missing Relay output");
+        var token = output["currency"]!.ToObject<Jumper.TokenInfo>()!;
+        var amount = BalanceMath.GetValueUsd((string?)output["amount"], token.Decimals, "1");
+        if (amount > 0 && decimal.TryParse((string?)output["amountUsd"], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var value) && value > 0)
+            token.PriceUSD = (value / amount).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (BalanceMath.GetValueUsd("1" + new string('0', token.Decimals), token.Decimals, token.PriceUSD) <= 0)
+            throw new InvalidDataException("Cannot establish native token price from Relay output");
+        return token;
+    }
 
     public static async Task<List<Jumper.TokenInfo>> Read(Web3 web3, int chainId, string wallet,
         IEnumerable<Jumper.TokenInfo> tokens, BigInteger minimumBlock = default, CancellationToken cancellation = default)
@@ -42,7 +50,7 @@ public static class TreasuryRpcBalances
         return result;
     }
 
-    public static async Task RefreshAfterSwap(Db db, int id, string chain, int chainId, string wallet,
+    public static async Task<Jumper.TokenInfo> RefreshAfterSwap(Db db, int id, string chain, int chainId, string wallet,
         Web3 web3, IEnumerable<Jumper.TokenInfo> discovered, object quote, string hashes)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
@@ -65,6 +73,7 @@ public static class TreasuryRpcBalances
         timeout.Token.ThrowIfCancellationRequested();
         db.ReplaceTreasurySnapshot(id, new Dictionary<string, string> { [chain] = JsonConvert.SerializeObject(balances) }, complete: false);
         Interlocked.Increment(ref _revision);
+        return balances.Single(t => TokenSelection.IsNative(t.Address));
     }
 
     public static async Task RefreshKnown(Db db, int id, string chain, int chainId, string wallet,

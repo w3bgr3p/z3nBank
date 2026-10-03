@@ -5,6 +5,26 @@ using z3n;
 using System.Globalization;
 using System.Net;
 
+if (args.Length == 3 && args[0] == "--repair-native-live")
+{
+    var config = new DbConfigStore().Load() ?? throw new InvalidOperationException("No saved database connection");
+    var id = int.Parse(args[1]); var chain = args[2]; var chainId = Rpc.ChainId(chain);
+    var db = new Db(config.Type == "postgres" ? dbMode.Postgre : dbMode.SQLite, sqLitePath: config.SqlitePath,
+        pgHost: config.Host, pgPort: config.Port, pgDbName: config.Database, pgUser: config.User, pgPass: config.Password);
+    var repairWallet = db.Get("evm", "_addresses", id: id, log: true, thrw: true);
+    if (string.IsNullOrWhiteSpace(repairWallet)) throw new InvalidOperationException("Account wallet missing");
+    using var repairHttp = new HttpClient();
+    var chains = JObject.Parse(await repairHttp.GetStringAsync("https://li.quest/v1/chains?chainTypes=EVM"))["chains"]!;
+    var native = chains.Single(c => (int)c["id"]! == chainId)["nativeToken"]!.ToObject<Jumper.TokenInfo>()!;
+    if (!TokenSelection.IsNative(native.Address) || BalanceMath.GetValueUsd("1000000000000000000", native.Decimals, native.PriceUSD) <= 0)
+        throw new InvalidDataException("Native price metadata unavailable");
+    await TreasuryRpcBalances.RefreshKnown(db, id, chain, chainId, repairWallet, new Nethereum.Web3.Web3(Rpc.Get(chainId)), [native]);
+    var saved = JsonConvert.DeserializeObject<List<Jumper.TokenInfo>>(db.Get(chain, "_treasury", id: id))!;
+    var amount = saved.Single(t => TokenSelection.IsNative(t.Address));
+    Console.WriteLine(JsonConvert.SerializeObject(new { id, chain, amount.Symbol, amount.Amount, amount.PriceUSD, amount.ValueUSD, signed = false, broadcast = false }));
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--rpc-audit-live")
 {
     var audit = JObject.Parse(File.ReadAllText(args[1]))["results"]!.OfType<JObject>()

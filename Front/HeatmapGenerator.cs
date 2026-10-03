@@ -60,7 +60,7 @@ public class HeatmapGenerator
                         {
                             // Legacy DeBank amounts are already scaled and lack chainId/priceUSD.
                             // They must be refreshed, not interpreted as raw blockchain amounts.
-                            tokens = tokens.Where(t => t.ChainId > 0 && t.ValueUSD > 0).ToList();
+                            tokens = tokens.Where(t => t.ChainId > 0 && System.Numerics.BigInteger.TryParse(t.Amount, out var raw) && raw > 0).ToList();
                             if (tokens.Count > 0) accountData.ChainData[chainName] = tokens;
                         }
                     } catch (JsonException ex) { Console.WriteLine($"Invalid balance JSON: account {id}, {chainName}: {ex.Message}"); }

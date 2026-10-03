@@ -382,9 +382,9 @@ public class DeFi
                             log?.Send($"✅ {opInfo} | TX: {result.TxHash} | {result.Details}", "SUCCESS");
                             try
                             {
-                                await TreasuryRpcBalances.RefreshAfterSwap(db, id, chainName, chainIdInt,
+                                var updatedNative = await TreasuryRpcBalances.RefreshAfterSwap(db, id, chainName, chainIdInt,
                                     account.Address, web3, chain.Value, quote, result.TxHash ?? "");
-                                log?.Send($"Balance refreshed from RPC | account #{id} | {chainName} | native and token amounts saved", "SUCCESS");
+                                log?.Send($"Balance refreshed from RPC | account #{id} | {chainName} | {updatedNative.Symbol}: {BalanceMath.GetValueUsd(updatedNative.Amount, updatedNative.Decimals, "1")} | price USD: {updatedNative.PriceUSD} | estimated USD: {updatedNative.ValueUSD} | native and token amounts saved", "SUCCESS");
                             }
                             catch (Exception refreshException)
                             {

@@ -11,6 +11,8 @@ See [RPC audit](docs/RPC_AUDIT.md) for the latest endpoint checks and the repeat
 
 Confirmed token swaps execute the exact contracts listed in the preview, even if LI.FI subsequently omits them. Each contract's amount is read from RPC before requesting a quote. Zero on-chain balances refresh the outdated Treasury snapshot without sending a transaction. Skip reasons (zero balance, minimum value, cost guard) appear in shared logs and the result dialog; a run with no swaps shows a warning rather than green success.
 
+Relay output token prices are derived from `currencyOut.amountUsd` and the scaled quoted output amount. Post-swap logs include the saved native amount, price and USD estimate. Positive on-chain balances remain visible even without price data; the tooltip labels their price as unknown.
+
 Database connection errors remain in the startup/settings dialog without clearing entered fields.
 PostgreSQL authentication, missing databases and connectivity failures have readable messages;
 failed settings changes preserve the existing working connection. Password and wallet PIN fields show

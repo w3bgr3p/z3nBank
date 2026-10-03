@@ -40,6 +40,11 @@ internal static class TreasuryRpcChecks
             Symbol = "Q", Amount = "1000000", Decimals = 6, PriceUSD = "2" };
         var native = new Jumper.TokenInfo { Address = "0x0000000000000000000000000000000000000000", ChainId = 1,
             Symbol = "ETH", Amount = "1", Decimals = 18, PriceUSD = "2000" };
+        var relay = JsonConvert.DeserializeObject<RelayBridge.QuoteResponse>("""
+            {"details":{"currencyOut":{"currency":{"chainId":56,"address":"0x0000000000000000000000000000000000000000","symbol":"BNB","decimals":18},"amount":"2000000000000000","amountUsd":"1.2"}}}
+            """)!;
+        var relayNative = TreasuryRpcBalances.NativeFromQuote(relay);
+        check("Relay native price uses total quoted USD divided by scaled output, not missing currency.priceUSD", relayNative.PriceUSD == "600" && relayNative.Decimals == 18 && relayNative.Symbol == "BNB");
         var handler = new Handler(); using var http = new HttpClient(handler);
         var web3 = new Web3(new RpcClient(new Uri("https://rpc.invalid"), http));
         var balances = await TreasuryRpcBalances.Read(web3, 1, wallet, [native, stale]);
@@ -53,6 +58,8 @@ internal static class TreasuryRpcChecks
         var path = Path.Combine(AppContext.BaseDirectory, $"rpc-balances-{Guid.NewGuid():N}.db");
         try {
             var db = new Db(dbMode.SQLite, sqLitePath: path);
+            db.Query("CREATE TABLE _addresses (id INTEGER PRIMARY KEY, evm TEXT)", thrw: true);
+            db.Query($"INSERT INTO _addresses VALUES (1, '{wallet}')", thrw: true);
             db.Query("CREATE TABLE _treasury (id INTEGER PRIMARY KEY, Ethereum TEXT, Blast TEXT)", thrw: true);
             var saved = JsonConvert.SerializeObject(new[] { stale });
             db.ReplaceTreasurySnapshot(1, new Dictionary<string, string> { ["Ethereum"] = saved, ["Blast"] = "unrelated" });
@@ -71,6 +78,9 @@ internal static class TreasuryRpcChecks
             await TreasuryRpcBalances.RefreshKnown(db, 1, "Ethereum", 1, wallet, web3, [stale]);
             balances = JsonConvert.DeserializeObject<List<Jumper.TokenInfo>>(db.Get("Ethereum", "_treasury", id: 1))!;
             check("Zero-balance skips refresh cached tokens and native without a swap or quote", balances.Any(t => t.Symbol == "Q" && t.Amount == "0") && balances.Any(t => t.Symbol == "ETH" && t.Amount == "1000000000000000000") && db.Get("Blast", "_treasury", id: 1) == "unrelated");
+            var unpriced = balances.Single(t => t.Symbol == "ETH"); unpriced.PriceUSD = null!;
+            db.ReplaceTreasurySnapshot(1, new Dictionary<string, string> { ["Ethereum"] = JsonConvert.SerializeObject(new[] { unpriced }) }, complete: false);
+            check("Positive native balance remains visible when USD price is unavailable", new HeatmapGenerator(db).GetTreasuryData(1, ["Ethereum"]).Single().ChainData["Ethereum"].Single().Amount == unpriced.Amount);
         } finally { File.Delete(path); }
     }
 }

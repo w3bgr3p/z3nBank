@@ -661,7 +661,7 @@ function showTooltip(accountId, address, chain, tokens, event) {
                     <span class="token-symbol">${token.symbol}</span>
                     <span class="token-amount">${amount}</span>
                 </div>
-                <span class="token-value">${formatUSD(token.valueUSD)}</span>
+                <span class="token-value">${Number(token.priceUSDString) > 0 ? formatUSD(token.valueUSD) : 'Price unknown'}</span>
             </div>
         `;
     });
