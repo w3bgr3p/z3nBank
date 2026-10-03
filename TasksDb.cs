@@ -33,7 +33,7 @@ public class TasksDb
 
     public static async Task<UpdateResult> UpdateDb(Db dbConnection, int dbRange = 1000,
         decimal minValue = 0.001m, Logger? log = null, Action<UpdateResult>? progress = null, Jumper? client = null,
-        IReadOnlyCollection<int>? accountIds = null)
+        IReadOnlyCollection<int>? accountIds = null, Func<int, Nethereum.Web3.Web3>? rpcClient = null)
     {
         if (dbRange < 1 || minValue < 0) throw new ArgumentOutOfRangeException(nameof(dbRange));
         var targets = BalanceUpdateAccounts(dbRange, accountIds);
@@ -42,6 +42,7 @@ public class TasksDb
         using var ownedClient = client == null ? new Jumper(log) : null;
         var jumper = client ?? ownedClient!;
         Dictionary<int, string>? chainNames = null;
+        List<Jumper.ChainInfo>? chainMetadata = null;
         var updated = 0;
         var failed = 0;
         var skipped = 0;
@@ -61,7 +62,10 @@ public class TasksDb
                     skipped++;
                     continue;
                 }
-                if (chainNames == null) { stage = "Fetch chain metadata"; chainNames = await jumper.GetChainMapping(); }
+                if (chainNames == null) {
+                    stage = "Fetch chain metadata"; chainMetadata = await jumper.GetChains();
+                    chainNames = chainMetadata.ToDictionary(c => c.Id, c => c.Name);
+                }
                 stage = "Fetch wallet balances";
                 var bal = await jumper.GetBalances(address);
                 stage = "Validate balance response";
@@ -72,8 +76,10 @@ public class TasksDb
                     var metadata = chainNames.FirstOrDefault(c => c.Value == column);
                     if (metadata.Key == 0 || bal.Balances.ContainsKey(metadata.Key.ToString())) continue;
                     var previous = db.Get(column, "_treasury", id: id, log: true, thrw: true);
-                    if (!string.IsNullOrWhiteSpace(previous)) bal.Balances[metadata.Key.ToString()] =
-                        JsonConvert.DeserializeObject<List<Jumper.TokenInfo>>(previous) ?? [];
+                    if (!string.IsNullOrWhiteSpace(previous)) {
+                        var remembered = JsonConvert.DeserializeObject<List<Jumper.TokenInfo>>(previous) ?? [];
+                        if (remembered.Count > 0) bal.Balances[metadata.Key.ToString()] = remembered;
+                    }
                 }
                 var snapshot = new Dictionary<string, string>(StringComparer.Ordinal);
                 foreach (var chain in bal.Balances)
@@ -83,6 +89,10 @@ public class TasksDb
                     stage = "Read saved balance snapshot";
                     using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
                     var known = new List<Jumper.TokenInfo>(chain.Value);
+                    var native = chainMetadata!.Single(c => c.Id == chainId).NativeToken;
+                    if (native == null || !TokenSelection.IsNative(native.Address) || native.ChainId != chainId)
+                        throw new InvalidDataException($"Missing native token metadata for chain {chainId}");
+                    known.Insert(0, native);
                     if (db.GetTableColumns("_treasury").Contains(chainName, StringComparer.Ordinal))
                     {
                         var saved = db.Get(chainName, "_treasury", id: id, log: true, thrw: true);
@@ -90,10 +100,11 @@ public class TasksDb
                     }
                     stage = $"Verify RPC balances ({chainName})";
                     var verified = known.Count == 0 ? new List<Jumper.TokenInfo>() :
-                        await TreasuryRpcBalances.Read(new Nethereum.Web3.Web3(Rpc.Get(chainId)), chainId, address, known,
+                        await TreasuryRpcBalances.Read(rpcClient?.Invoke(chainId) ?? new Nethereum.Web3.Web3(Rpc.Get(chainId)), chainId, address, known,
                             cancellation: timeout.Token);
-                    var tokens = verified.Where(t => t.ValueUSD > minValue).ToList();
-                    snapshot[chainName] = JsonConvert.SerializeObject(tokens);
+                    // Preserve discovery metadata even for zero, dust and unpriced balances.
+                    // Display filtering must never prevent the next on-chain check.
+                    snapshot[chainName] = JsonConvert.SerializeObject(verified);
                 }
                 stage = "Save balance snapshot";
                 db.ReplaceTreasurySnapshot(id, snapshot);
@@ -148,7 +159,7 @@ public class TasksDb
                 {
                     try {
                         var tokens = JsonConvert.DeserializeObject<List<TokenInfo>>(chainJson);
-                        tokens = tokens?.Where(t => t.ChainId > 0 && t.ValueUSD > 0).ToList();
+                        tokens = tokens?.Where(t => t.ChainId > 0 && System.Numerics.BigInteger.TryParse(t.Amount, out var amount) && amount > 0).ToList();
                         if (tokens != null && tokens.Count > 0)
                             accountData.ChainData[chainName] = tokens;
                     } catch { /* log error */ }

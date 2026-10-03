@@ -3,12 +3,17 @@ using Nethereum.Web3;
 using Nethereum.RPC.Eth.DTOs;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Nethereum.ABI.FunctionEncoding.Attributes;
+using Nethereum.Contracts;
 using z3n;
 
 namespace z3nSafe;
 
 public static class TreasuryRpcBalances
 {
+    [Function("decimals", "uint8")]
+    public class DecimalsFunction : FunctionMessage { }
+
     private static long _revision;
     public static long Revision => Interlocked.Read(ref _revision);
     public static Jumper.TokenInfo NativeFromQuote(object quote)
@@ -43,6 +48,9 @@ public static class TreasuryRpcBalances
                     token.Address, new DeFi.BalanceOfFunction { Owner = wallet }, block).WaitAsync(cancellation);
             if (amount < 0) throw new InvalidDataException("RPC returned a negative balance");
             var updated = JObject.FromObject(token).ToObject<Jumper.TokenInfo>()!;
+            if (!TokenSelection.IsNative(token.Address))
+                updated.Decimals = await web3.Eth.GetContractQueryHandler<DecimalsFunction>()
+                    .QueryAsync<byte>(token.Address, new DecimalsFunction(), block).WaitAsync(cancellation);
             updated.Amount = amount.ToString(System.Globalization.CultureInfo.InvariantCulture);
             updated.ChainId = chainId;
             result.Add(updated);

@@ -32,6 +32,7 @@ public class Jumper : IDisposable
         [JsonProperty("name")] public string Name { get; set; }
 
         [JsonProperty("key")] public string Key { get; set; }
+        [JsonProperty("nativeToken")] public TokenInfo? NativeToken { get; set; }
     }
 
     public class TokenInfo
@@ -54,6 +55,9 @@ public class Jumper : IDisposable
     }
 
     public async Task<Dictionary<int, string>> GetChainMapping()
+        => (await GetChains()).ToDictionary(x => x.Id, x => x.Name);
+
+    public async Task<List<ChainInfo>> GetChains()
     {
         try
         {
@@ -68,7 +72,7 @@ public class Jumper : IDisposable
                 throw new InvalidDataException("LI.FI returned no EVM chain metadata.");
 
             // Превращаем список в словарь для удобного поиска: [1: "Ethereum", 56: "BSC", ...]
-            return data.Chains.ToDictionary(x => x.Id, x => x.Name);
+            return data.Chains;
         }
         catch (Exception ex)
         {
@@ -198,7 +202,8 @@ public class Jumper : IDisposable
             foreach (var chain in data.Balances)
             {
                 if (!int.TryParse(chain.Key, out var chainId) || chain.Value == null ||
-                    chain.Value.Any(t => t == null || t.ChainId != chainId || string.IsNullOrWhiteSpace(t.Amount)))
+                    chain.Value.Any(t => t == null || t.ChainId != chainId ||
+                        !Regex.IsMatch(t.Address ?? "", "^0x[0-9a-fA-F]{40}$")))
                     throw new InvalidDataException("LI.FI returned invalid chain or token data.");
                 chain.Value.RemoveAll(t => string.Equals(t.VerificationStatus, "denied", StringComparison.OrdinalIgnoreCase) ||
                                           string.Equals(t.VerificationStatus, "malicious", StringComparison.OrdinalIgnoreCase));

@@ -289,7 +289,6 @@ public class DeFi
                 string chainName = chainNames.GetValueOrDefault(chainIdInt, $"ID:{chain.Key}");
                 
                 var tokensToSwap = chain.Value.Where(t => 
-                    (confirmedTargets != null || t.ValueUSD > minValue) &&
                     !TokenSelection.IsNative(t.Address) &&
                     (tokenTargets == null || tokenTargets.Contains(TokenSelection.Key(chainIdInt, t.Address)))
                 ).ToList();
@@ -318,18 +317,10 @@ public class DeFi
                         if (token.IsStable && excludeStables) { Skip(chainName, token, "Stablecoins are excluded"); continue; }
 
                         var tokenService = web3.Eth.GetContractHandler(token.Address);
-                        BigInteger actualBalanceRaw;
-                        if (token.Address == "0x0000000000000000000000000000000000000000" || 
-                            token.Address.ToLower() == "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
-                        {
-                            var balance = await web3.Eth.GetBalance.SendRequestAsync(account.Address);
-                            actualBalanceRaw = balance.Value;
-                        }
-                        else
-                        {
-                            actualBalanceRaw = await SwapExecution.Read(web3.Eth.GetContractQueryHandler<BalanceOfFunction>()
-                                .QueryAsync<BigInteger>(token.Address, new BalanceOfFunction { Owner = account.Address }));
-                        }
+                        var verified = (await SwapExecution.Read(TreasuryRpcBalances.Read(web3, chainIdInt,
+                            account.Address, [token]))).Single();
+                        var actualBalanceRaw = BigInteger.Parse(verified.Amount);
+                        token.Decimals = verified.Decimals;
                         
                         token.Amount = actualBalanceRaw.ToString();
                         string opInfo = $"[{chainName}] {token.Symbol} ({token.ValueUSD:F2} USD)";
@@ -344,7 +335,7 @@ public class DeFi
                             catch (Exception ex) { refreshErrors.Add(ex.Message); log?.Send($"Zero balance snapshot refresh failed | #{id} | {chainName} | {ex.Message}", "ERROR"); }
                             continue;
                         }
-                        if (confirmedTargets != null && BalanceMath.GetValueUsd(actualBalanceRaw.ToString(), token.Decimals, token.PriceUSD) <= minValue)
+                        if (BalanceMath.GetValueUsd(actualBalanceRaw.ToString(), token.Decimals, token.PriceUSD) <= minValue)
                         {
                             Skip(chainName, token, $"Live RPC balance value is at or below Min. USD {minValue}");
                             continue;

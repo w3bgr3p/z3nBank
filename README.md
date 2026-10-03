@@ -335,7 +335,7 @@ Hover over any cell to see:
 **Manual Refresh:**
 - Click the 🔄 Refresh button
 - Enter max account ID to scan
-- **Refresh** reloads the saved database snapshot; **Update Balances** discovers tokens and prices through LI.FI and verifies token amounts through each network's RPC at a specific block. Previously known contracts are checked even if the indexer omits them. Dollar prices remain estimates from LI.FI.
+- **Refresh** reloads the saved database snapshot; **Update Balances** uses LI.FI only for discovery and price metadata. Native balances, ERC-20 balances and ERC-20 `decimals()` are read through RPC at a specific block. Every discovered or previously known network includes its native token, even when wallet discovery omits it. Previously known contracts are checked even if the indexer omits them. Dollar prices remain estimates from LI.FI.
   for selected Treasury accounts. With no selected accounts, it updates the entire current Max ID range.
   The confirmation shows the scope and freezes the selected account IDs for that run.
 
@@ -343,7 +343,7 @@ Hover over any cell to see:
 - Click "Auto: OFF" to toggle automatic updates
 - Reloads the database view every 5 seconds; this does not fetch new blockchain balances
 
-Successful balance updates replace the entire wallet snapshot, including chains that are now empty. Failed requests keep the previous data and appear in the update status. Only positive token values above the requested minimum are stored. The public LI.FI API allows 10 requests per minute; updates are paced and HTTP 429 responses are retried after waiting.
+Successful balance updates replace the entire wallet snapshot. Known token contracts are retained for future RPC checks, including zero balances, dust and tokens without a USD price. Treasury displays positive on-chain balances; the minimum USD setting controls swap eligibility, not snapshot storage. Failed RPC checks keep the previous wallet snapshot and appear in the update status. The public LI.FI API allows 10 requests per minute; discovery requests are paced and HTTP 429 responses are retried after waiting.
 
 After each confirmed Treasury swap, native and known ERC-20 amounts are read from RPC and saved for the affected chain only. The UI reloads when that snapshot changes, including swaps started from a row button. RPC network and block height are checked against the confirmed transaction; a failed refresh keeps the previous snapshot and logs a separate error without reporting the confirmed swap as failed. No indexed balance response overwrites this post-swap refresh.
 

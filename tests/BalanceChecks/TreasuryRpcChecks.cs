@@ -21,7 +21,8 @@ internal static class TreasuryRpcChecks
             JToken result = method switch {
                 "eth_chainId" => Chain, "eth_blockNumber" => Head,
                 "eth_getBalance" => "0xde0b6b3a7640000",
-                "eth_call" => "0x" + new string('0', 64),
+                "eth_call" => (string?)body["params"]?[0]?["data"] == "0x313ce567"
+                    ? "0x" + new string('0', 63) + "8" : "0x" + new string('0', 64),
                 "eth_getTransactionReceipt" => new JObject { ["transactionHash"] = "0x" + new string('1', 64),
                     ["blockHash"] = "0x" + new string('2', 64), ["blockNumber"] = "0x64", ["status"] = "0x1",
                     ["transactionIndex"] = "0x0", ["gasUsed"] = "0x5208", ["cumulativeGasUsed"] = "0x5208", ["logs"] = new JArray() },
@@ -31,6 +32,21 @@ internal static class TreasuryRpcChecks
             if (FailToken && method == "eth_call") response["error"] = new JObject { ["code"] = -32000, ["message"] = "RPC unavailable" };
             else response["result"] = result;
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(response.ToString()) };
+        }
+    }
+    private sealed class DiscoveryHandler : HttpMessageHandler
+    {
+        public bool Empty;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellation)
+        {
+            var body = request.RequestUri!.AbsolutePath.EndsWith("/chains") ? """
+                {"chains":[{"id":1,"name":"Ethereum","nativeToken":{"address":"0x0000000000000000000000000000000000000000","chainId":1,"symbol":"ETH","decimals":18,"priceUSD":"2000"}}]}
+                """ : Empty ? """
+                {"walletAddress":"0x1111111111111111111111111111111111111111","balances":{}}
+                """ : """
+                {"walletAddress":"0x1111111111111111111111111111111111111111","balances":{"1":[{"address":"0x2222222222222222222222222222222222222222","chainId":1,"symbol":"Q","amount":"999999999999","decimals":6,"priceUSD":null}]}}
+                """;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
         }
     }
     public static async Task Run(Action<string, bool> check)
@@ -49,6 +65,7 @@ internal static class TreasuryRpcChecks
         var web3 = new Web3(new RpcClient(new Uri("https://rpc.invalid"), http));
         var balances = await TreasuryRpcBalances.Read(web3, 1, wallet, [native, stale]);
         check("Indexed amounts are replaced by RPC native and ERC-20 amounts", balances[0].Amount == "1000000000000000000" && balances[1].Amount == "0" && stale.Amount == "1000000");
+        check("Contract decimals override stale API decimals without mutating discovery metadata", balances[1].Decimals == 8 && stale.Decimals == 6);
         check("All amounts use the same explicit block", handler.Calls.Where(c => (string?)c["method"] is "eth_call" or "eth_getBalance").All(c => (string?)c["params"]?[1] == "0x64"));
         handler.Chain = "0x38"; var rejected = false;
         try { await TreasuryRpcBalances.Read(web3, 1, wallet, [native]); } catch (InvalidDataException) { rejected = true; }
@@ -81,6 +98,19 @@ internal static class TreasuryRpcChecks
             var unpriced = balances.Single(t => t.Symbol == "ETH"); unpriced.PriceUSD = null!;
             db.ReplaceTreasurySnapshot(1, new Dictionary<string, string> { ["Ethereum"] = JsonConvert.SerializeObject(new[] { unpriced }) }, complete: false);
             check("Positive native balance remains visible when USD price is unavailable", new HeatmapGenerator(db).GetTreasuryData(1, ["Ethereum"]).Single().ChainData["Ethereum"].Single().Amount == unpriced.Amount);
+            db.ReplaceTreasurySnapshot(1, new Dictionary<string, string> { ["Ethereum"] = "[]", ["Blast"] = "[]" });
+            var discovery = new DiscoveryHandler(); using var discoveryHttp = new HttpClient(discovery);
+            using var jumper = new Jumper(discoveryHttp);
+            var update = await TasksDb.UpdateDb(db, 1, minValue: 10000, client: jumper,
+                log: new Logger(false, http: false), rpcClient: _ => web3);
+            balances = JsonConvert.DeserializeObject<List<Jumper.TokenInfo>>(db.Get("Ethereum", "_treasury", id: 1))!;
+            check("Update adds native omitted by discovery and saves RPC balances regardless of the USD minimum", update.Updated == 1 && balances.Single(t => t.Symbol == "ETH").ValueUSD == 2000 && balances.Single(t => t.Symbol == "Q").Amount == "0");
+            discovery.Empty = true; handler.Calls.Clear();
+            update = await TasksDb.UpdateDb(db, 1, client: jumper, log: new Logger(false, http: false), rpcClient: _ => web3);
+            check("Previously known zero and unpriced contracts are rechecked when API omits their entire network", update.Updated == 1 && handler.Calls.Any(c => (string?)c["method"] == "eth_call") && handler.Calls.Any(c => (string?)c["method"] == "eth_getBalance"));
+            saved = db.Get("Ethereum", "_treasury", id: 1); handler.FailToken = true;
+            update = await TasksDb.UpdateDb(db, 1, client: jumper, log: new Logger(false, http: false), rpcClient: _ => web3);
+            check("A failed on-chain check preserves the wallet snapshot and reports the verification stage", update.Failed == 1 && update.Failures.Single().Stage == "Verify RPC balances (Ethereum)" && db.Get("Ethereum", "_treasury", id: 1) == saved);
         } finally { File.Delete(path); }
     }
 }
