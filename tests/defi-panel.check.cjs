@@ -33,7 +33,7 @@ const context = vm.createContext({ console, setTimeout: () => 1, clearTimeout() 
         }
         if (url.endsWith('execute')) {
             if (executeGate) await executeGate;
-            if (executeError) return { ok: false, json: async () => ({ error: executeError }) };
+            if (executeError) return { ok: false, clone() { return this; }, json: async () => ({ error: executeError }) };
         }
         const data = url.endsWith('batch/preview') ? { planId: 'batch-id', targets: [{ position, quote }],
             accounts: 1, totalUsd: 10, feeUsd: 1, gasBoostPercent: 2, skipped: [{ accountId: 4, chain: 'arb', reason: 'Adapter unavailable' }] }
@@ -42,6 +42,7 @@ const context = vm.createContext({ console, setTimeout: () => 1, clearTimeout() 
     }
 });
 vm.runInContext(fs.readFileSync('wwwroot/app.js', 'utf8').match(/function getValueLevel[\s\S]*?\n}/)[0], context);
+vm.runInContext(fs.readFileSync('wwwroot/app.js', 'utf8').match(/async function walletFetch[\s\S]*?\n}/)[0], context);
 vm.runInContext(fs.readFileSync('wwwroot/defi.js', 'utf8'), context);
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const detailButton = () => el('defiRows').children[0].children[6].children[0];

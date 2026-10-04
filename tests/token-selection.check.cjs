@@ -48,6 +48,7 @@ const context = vm.createContext({ treasuryData, API_BASE: '/api/treasury', cons
         return { ok: true, json: async () => data };
     }
 });
+vm.runInContext(fs.readFileSync('wwwroot/app.js', 'utf8').match(/async function walletFetch[\s\S]*?\n}/)[0], context);
 vm.runInContext(fs.readFileSync('wwwroot/tokens.js', 'utf8'), context);
 
 (async () => {

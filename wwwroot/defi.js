@@ -74,7 +74,7 @@
     // Keep the existing log drawer available above either tab.
     const logs = el('logsPanel'); if (logs) document.body.append(logs);
     async function api(path, body) {
-        const response = await fetch('/api/Treasury/defi/' + path, body === undefined ? {} : {
+        const response = await walletFetch('/api/Treasury/defi/' + path, body === undefined ? {} : {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
         });
         const data = await response.json().catch(() => ({}));
@@ -383,7 +383,7 @@
                 el('defiPreviewConfirm').disabled = true; el('defiPreviewCancel').disabled = true;
                 el('defiPreviewStatus').textContent = 'Starting withdrawal…';
                 try { await execute(); accepted = true; preview.close(); }
-                catch (error) { el('defiPreviewStatus').textContent = `Could not start withdrawal: ${error.message}`; }
+                catch (error) { el('defiPreviewStatus').textContent = error.pinCancelled ? 'Withdrawal cancelled before signing.' : `Could not start withdrawal: ${error.message}`; }
                 finally {
                     confirmationPending = false;
                     el('defiPreviewConfirm').disabled = false; el('defiPreviewCancel').disabled = false;

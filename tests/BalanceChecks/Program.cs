@@ -5,6 +5,12 @@ using z3n;
 using System.Globalization;
 using System.Net;
 
+if (args.Length == 1 && args[0] == "--pin-checks")
+{
+    await PinChecks.Run();
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--defi-live-coverage")
 {
     var folder = args[1];

@@ -343,7 +343,7 @@ function getValueLevel(value, maxValue) {
     if (value >= 100) return 'level-4';  // $100+
     if (value >= 10) return 'level-3';   // $10-100
     if (value >= 1) return 'level-2';    // $1-10
-    return 'level-1';                    // $0-1
+    return value > 0 && value < .10 ? 'level-1 balance-dust' : 'level-1'; // $0-1
 }
 
 // Добавить эту функцию в начало файла или перед функциями swap/bridge
@@ -382,7 +382,7 @@ async function swapAllToNative(accountId, button) {
     try {
         console.log(`🚀 Starting swap-all for account ${accountId}`);
 
-        const response = await fetch(`${API_BASE}/swap-chains`, {
+        const response = await walletFetch(`${API_BASE}/swap-chains`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -417,6 +417,7 @@ async function swapAllToNative(accountId, button) {
     }
     catch (error)
     {
+        if (error.pinCancelled) { button.disabled = false; button.textContent = ' '; return; }
         console.error('❌ Swap failed:', error);
         Swal.fire({
             icon: 'error',
@@ -463,7 +464,7 @@ async function bridgeToChain(accountId) {
 
     try {
         console.log(`🌉 Starting bridge for account ${accountId} to ${destination}`);
-        const response = await fetch(`${API_BASE}/bridge-chains`, {
+        const response = await walletFetch(`${API_BASE}/bridge-chains`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -493,6 +494,7 @@ async function bridgeToChain(accountId) {
 
 
     } catch (error) {
+        if (error.pinCancelled) return;
         console.error('❌ Bridge failed:', error);
         Swal.fire({
             icon: 'error',
@@ -556,7 +558,7 @@ function renderHeatmap(data) {
             const hasBalance = tokens && tokens.length > 0;
             const chainTotal = hasBalance ? calculateChainTotal(tokens) : 0;
             const level = getValueLevel(chainTotal, maxValuePerChain[chain]);
-            const displayValue = chainTotal >= 1 ? formatCompactUSD(chainTotal) : '';
+            const displayValue = chainTotal > 0 ? (chainTotal < .01 ? '<0.01' : formatCompactUSD(chainTotal)) : '';
             const debankUrl = `https://debank.com/profile/${account.address}`;
             html += '<td><div class="cell-wrapper">';
             html += `<div class="heatmap-cell ${level}" 
@@ -576,12 +578,12 @@ function renderHeatmap(data) {
                 return sum + (isNaN(val) ? 0 : val);
             }, 0);
         const totalLevel = getValueLevel(accountTotal, 1000);
-        const totalDisplay = accountTotal >= 1 ? formatCompactUSD(accountTotal) : '';
+        const totalDisplay = accountTotal > 0 ? (accountTotal < .01 ? '<0.01' : formatCompactUSD(accountTotal)) : '';
 
         html += `<td style="background: #0d1117; border-left: 2px solid #30363d;">
             <div class="cell-wrapper">
                 <div class="heatmap-cell ${totalLevel}">
-                    <span class="cell-value" style="font-weight: 700;">${totalDisplay}</span>
+                    <span class="cell-value">${totalDisplay}</span>
                 </div>
             </div>
         </td>`;
@@ -947,57 +949,58 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 });
-async function setPin() {
-    const { value: pin } = await Swal.fire({
+async function setPin(accountIds = [], reason = '') {
+    const target = document.activeElement?.closest('dialog[open]') ||
+        Array.from(document.querySelectorAll('dialog[open]')).at(-1) || document.body;
+    const result = await Swal.fire({
+        target,
         title: 'Enter PIN',
         input: 'password', // Теперь PIN скрыт звездочками
-        inputLabel: 'PIN for key decryption',
+        inputLabel: reason || 'PIN for key decryption',
         inputPlaceholder: 'Enter your PIN',
         background: '#161b22',
         color: '#c9d1d9',
         showCancelButton: true,
-        confirmButtonText: 'Set PIN',
+        confirmButtonText: 'Unlock',
+        showLoaderOnConfirm: true,
+        allowOutsideClick: () => !Swal.isLoading(),
+        allowEscapeKey: () => !Swal.isLoading(),
+        inputValidator: value => !value ? 'Enter your PIN' : undefined,
+        preConfirm: async pin => {
+            try {
+                const encodedPin = btoa(Array.from(new TextEncoder().encode(pin), byte => String.fromCharCode(byte)).join(''));
+                const response = await fetch(`${API_BASE}/pin`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pin: encodedPin, accountIds })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+                return true;
+            } catch (error) {
+                Swal.showValidationMessage(error.message);
+                return false;
+            }
+        },
         inputAttributes: {
             autocapitalize: 'off',
             autocorrect: 'off'
         }
     });
 
-    if (!pin) return;
-    const encodedPin = btoa(pin);
-    try {
-        console.log('🔐 Setting PIN on server...');
+    return result.isConfirmed;
+}
 
-        const response = await fetch(`${API_BASE}/pin`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pin: encodedPin })
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || `HTTP ${response.status}`);
+async function walletFetch(url, options) {
+    while (true) {
+        const response = await fetch(url, options);
+        if (response.ok) return response;
+        const error = await response.clone().json().catch(() => ({}));
+        if (!['pin_required', 'invalid_pin'].includes(error.code)) return response;
+        if (!await setPin(error.accountIds || [], error.error)) {
+            const cancelled = new Error('Operation cancelled before signing.');
+            cancelled.pinCancelled = true;
+            throw cancelled;
         }
-
-        const result = await response.json();
-        console.log('✅ PIN set successfully');
-        Swal.fire({
-            icon: 'success',
-            title: '✅ PIN Saved',
-            html: '<p>PIN saved on server until restart</p><p style="font-size: 0.9em; color: #8b949e; margin-top: 10px;">Hotkey: <kbd>Ctrl+Shift+P</kbd></p>',
-            background: '#161b22',
-            color: '#c9d1d9',
-            timer: 3000
-        });
-    } catch (error) {
-        console.error('❌ Failed to set PIN:', error);
-        Swal.fire({
-            icon: 'error',
-            title: '❌ Failed to Set PIN',
-            text: error.message,
-            background: '#161b22',
-            color: '#c9d1d9'
-        });
     }
 }
 

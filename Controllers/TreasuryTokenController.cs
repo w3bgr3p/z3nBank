@@ -65,14 +65,15 @@ public partial class TreasuryController
                 plan.Database != _dbService.GetDb())
                 return BadRequest(new { error = "Preview expired or database changed; preview again" });
             if (plan.Targets.Count == 0) return BadRequest(new { error = "No swappable tokens" });
-            if (string.IsNullOrEmpty(_pin)) return BadRequest(new { error = "Set wallet PIN first" });
+            var pin = _pin;
+            var pinCheck = RequireWalletPin(plan.Database, plan.Targets.Select(t => t.Id), pin);
+            if (pinCheck != null) return pinCheck;
             _tokenPlan = null;
             _tokenSwapRunning = true;
             _tokenSwapJob = plan.Id;
             _tokenSwapCancelled = false;
             TokenSwapResults.Clear();
             _tokenSwapTotal = plan.Targets.Select(t => t.Id).Distinct().Count();
-            var pin = _pin;
             var operation = RegisterSwap();
             _ = Task.Run(async () => {
                 try { await SwapExecution.Run(operation.Cancellation.Token, () => RunTokenSwap(plan, pin), plan.GasBoostPercent); }

@@ -234,8 +234,10 @@ public partial class TreasuryController
                 var plan = _defiExit;
                 if (plan == null || !DefiAccountReady(plan.Position.AccountId) || plan.Id != planId || plan.Expires < DateTimeOffset.UtcNow || plan.Database != _dbService.GetDb())
                     return Reject("Withdrawal preview expired; preview again");
-                if (string.IsNullOrEmpty(_pin)) return Reject("Set wallet PIN first");
-                var pin = _pin; _defiExit = null; _defiExitRunning = true; _defiExitResult = null;
+                var pin = _pin;
+                var pinCheck = RequireWalletPin(plan.Database, [plan.Position.AccountId], pin);
+                if (pinCheck != null) return pinCheck;
+                _defiExit = null; _defiExitRunning = true; _defiExitResult = null;
                 DefiBatchResults.Clear(); _defiBatchTotal = 0;
                 var operation = RegisterSwap();
                 new Logger(true, acc: plan.Position.AccountId.ToString()).Send($"DeFi withdrawal accepted | {plan.Position.Protocol} | {plan.Position.Chain}");

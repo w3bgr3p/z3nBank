@@ -54,6 +54,7 @@ tbody tr:hover td { background: var(--bg1) !important; }
 .heatmap-cell.empty { background: var(--bg2); opacity: .5; border: none; }
 .heatmap-cell:hover { transform: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent); }
 .cell-value { font-family: var(--mono); font-size: 11px; font-weight: 600; color: #fff; text-shadow: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.heatmap-cell.balance-dust .cell-value, .defi-grid .defi-heat.balance-dust { color: #686868; font-weight: 400; }
 .swap-btn, .bridge-btn { background: var(--bg2); color: var(--text2); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: none; width: 22px; height: 22px; }
 .swap-btn:hover:not(:disabled) { color: var(--green); border-color: var(--green); background: var(--green-dim); box-shadow: none; }
 .bridge-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); box-shadow: none; }
@@ -169,11 +170,19 @@ body.defi-active .stats-bar, body.defi-active #tooltip { display: none; }
 .defi-sidebar .token-value { gap: 4px; }
 #defiSummary { font-size: 10px; color: var(--text2); line-height: 1.6; }
 @media (max-width: 720px) { .defi-workspace { flex-direction: column; overflow: auto; } .defi-workspace .defi-grid-wrap { flex: 0 0 60vh; } .defi-sidebar { flex: none; width: 100%; max-width: none; } }
-.defi-grid { width: 100%; border-collapse: separate; border-spacing: 2px; font-size: 12px; }
-.defi-grid th { position: sticky; top: 0; z-index: 1; background: var(--bg1); padding: 8px; white-space: nowrap; }
-.defi-grid td { padding: 2px; text-align: center; vertical-align: middle; }
-.defi-wallet { text-align: left !important; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.defi-grid .defi-heat { display: flex; align-items: center; justify-content: center; width: 100%; min-width: 85px; height: 26px; box-sizing: border-box; line-height: 1; border-radius: 0; color: #fff; font-weight: bold; padding: 4px 8px; border-color: transparent; }
+.defi-grid { width: 100%; min-width: 0; table-layout: fixed; border-collapse: separate; border-spacing: 2px; font-size: 11px; }
+.defi-grid th { position: sticky; top: 0; z-index: 1; background: var(--bg1); padding: 4px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.defi-grid th:first-child { width: 30px; }
+.defi-grid th:nth-child(2) { width: 140px; }
+.defi-grid th:last-child { width: 84px; }
+.defi-grid td { padding: 1px; text-align: center; vertical-align: middle; overflow: hidden; }
+.defi-wallet { text-align: left !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.defi-grid .defi-heat { display: flex; align-items: center; justify-content: center; width: 100%; min-width: 0; height: 26px; box-sizing: border-box; line-height: 1; border-radius: 0; color: #fff; font-weight: 600; padding: 2px; border-color: transparent; white-space: nowrap; overflow: hidden; }
+@media (min-width: 721px) and (max-width: 1400px) {
+    .defi-grid th:nth-child(2) { width: 110px; }
+    .defi-grid th:last-child { width: 76px; }
+    .defi-grid .defi-heat { font-size: 10px; padding: 2px 1px; }
+}
 .defi-heat.negative { background: #823e3e; }
 .defi-heat.empty { background: var(--bg2); color: var(--text-muted, #aaa); }
 .defi-heat:hover { outline: 1px solid var(--accent); }

@@ -99,8 +99,10 @@ public partial class TreasuryController
             if (plan == null || plan.Id != planId || plan.Expires < DateTimeOffset.UtcNow || plan.Version != _defiVersion ||
                 plan.Database != _dbService.GetDb() || _defiNeedsRescan || HasStaleDefiAccounts || plan.Targets.Count == 0)
                 return Reject("Batch preview is empty or expired; preview again");
-            if (string.IsNullOrEmpty(_pin)) return Reject("Set wallet PIN first");
-            var pin = _pin; _defiBatchPlan = null; _defiExit = null; _defiExitRunning = true;
+            var pin = _pin;
+            var pinCheck = RequireWalletPin(plan.Database, plan.Targets.Select(t => t.Position.AccountId), pin);
+            if (pinCheck != null) return pinCheck;
+            _defiBatchPlan = null; _defiExit = null; _defiExitRunning = true;
             _defiExitResult = null; DefiBatchResults.Clear(); _defiBatchTotal = plan.Targets.Count;
             var operation = RegisterSwap();
             _ = Task.Run(async () => {

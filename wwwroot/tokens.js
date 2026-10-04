@@ -90,7 +90,7 @@ function highlightSelectedToken() {
 }
 
 async function tokenSwapRequest(path, body) {
-    const response = await fetch(`${API_BASE}/token-swap/${path}`, {
+    const response = await walletFetch(`${API_BASE}/token-swap/${path}`, {
         method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body), cache: 'no-store'
     });
@@ -142,6 +142,7 @@ async function swapSelectedToken() {
         const job = await tokenSwapRequest('execute', plan.planId);
         await pollTokenSwap(job.jobId);
     } catch (error) {
+        if (error.pinCancelled) return;
         await Swal.fire({ icon: 'error', title: 'Token swap', text: error.message });
     } finally { tokenSwapPending = false; highlightSelectedToken(); }
 }

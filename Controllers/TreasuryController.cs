@@ -66,9 +66,11 @@ public partial class TreasuryController : ControllerBase
     public class PinRequest
     {
         public string Pin { get; set; }
+        public int[] AccountIds { get; set; } = [];
     }
     
     private static string _pin = "";
+    private static Db? _pinDatabase;
     private static Protocol _protocol = Protocol.LiFi;
     private static Logger _log = new  Logger(true);
     private static readonly object UpdateLock = new();
@@ -397,6 +399,8 @@ public partial class TreasuryController : ControllerBase
     [HttpPost("pin")]
     public IActionResult SetPin([FromBody] PinRequest request)
     {
+        var dbCheck = CheckDbConnection();
+        if (dbCheck != null) return dbCheck;
         try
         {
             if (string.IsNullOrEmpty(request.Pin))
@@ -404,7 +408,21 @@ public partial class TreasuryController : ControllerBase
                 return BadRequest(new { error = "PIN is required" });
             }
             
+            var db = _dbService.GetDb();
+            var ids = request.AccountIds;
+            if (ids == null || ids.Length > 10000 || ids.Any(id => id < 1))
+                return BadRequest(new { error = "Invalid account IDs" });
+            if (ids.Length == 0)
+            {
+                var first = db.Get("id", "_wallets", where: "secp256k1 IS NOT NULL AND secp256k1 <> '' ORDER BY id LIMIT 1");
+                if (!int.TryParse(first, out var id))
+                    return BadRequest(new { error = "No encrypted wallet key is available to verify the PIN" });
+                ids = [id];
+            }
+            var validation = ValidateWalletPin(db, ids, request.Pin);
+            if (validation != null) return validation;
             _pin = request.Pin;
+            _pinDatabase = db;
             Console.WriteLine("✅ PIN set successfully");
             
             return Ok(new { success = true, message = "PIN set successfully" });
@@ -414,6 +432,34 @@ public partial class TreasuryController : ControllerBase
             Console.WriteLine($"❌ ERROR in SetPin: {ex.Message}");
             return StatusCode(500, new { error = ex.Message });
         }
+    }
+
+    private IActionResult? RequireWalletPin(Db db, IEnumerable<int> accountIds, string pin)
+    {
+        var ids = accountIds.Distinct().ToArray();
+        if (string.IsNullOrEmpty(pin) || _pinDatabase != db)
+            return BadRequest(new { code = "pin_required", error = "Enter wallet PIN to continue", accountIds = ids });
+        return ValidateWalletPin(db, ids, pin);
+    }
+
+    private IActionResult? ValidateWalletPin(Db db, IEnumerable<int> accountIds, string encodedPin)
+    {
+        string pin;
+        try { pin = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedPin)); }
+        catch (FormatException) { return BadRequest(new { code = "invalid_pin", error = "Invalid PIN encoding" }); }
+        var ids = accountIds.Distinct().ToArray();
+        foreach (var id in ids)
+        {
+            var encrypted = db.Get("secp256k1", "_wallets", where: $"id = {id}");
+            if (string.IsNullOrEmpty(encrypted))
+                return BadRequest(new { error = $"No private key stored for account #{id}" });
+            var key = SAFU.Decode(encrypted, pin, id.ToString());
+            if (string.IsNullOrEmpty(key))
+                return BadRequest(new { code = "invalid_pin", error = $"Incorrect PIN or wallet key cannot be decrypted on this computer (account #{id}). Try again.", accountIds = ids });
+            try { _ = new Nethereum.Web3.Accounts.Account(key); }
+            catch (Exception) { return BadRequest(new { error = $"Invalid private key stored for account #{id}" }); }
+        }
+        return null;
     }
     
     [HttpPost("swap-chains")]
@@ -426,6 +472,8 @@ public partial class TreasuryController : ControllerBase
         {
             var db = _dbService.GetDb();
             var pin = _pin;
+            var pinCheck = RequireWalletPin(db, [request.Id], pin);
+            if (pinCheck != null) return pinCheck;
             var protocol = ParseProtocol(request.Protocol);
             Console.WriteLine($"🚀 Starting swap-chains for account {request.Id}");
             Console.WriteLine($"   Chains: {string.Join(", ", request.Chains)}");
@@ -489,6 +537,8 @@ public partial class TreasuryController : ControllerBase
             }
             
             var pin = _pin;
+            var pinCheck = RequireWalletPin(db, [request.Id], pin);
+            if (pinCheck != null) return pinCheck;
             var protocol = ParseProtocol(request.Protocol);
             Console.WriteLine($"🚀 Starting bridge for account {request.Id} to {request.Destination}");
             Console.WriteLine($"   Chains: {string.Join(", ", request.Chains)}");
